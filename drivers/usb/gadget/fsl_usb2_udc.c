@@ -15,6 +15,7 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
+/* $Id: fsl_usb2_udc.c 21639 2013-04-09 00:15:24Z Yasuyuki Matsumoto $ */
 
 #undef VERBOSE
 
@@ -49,6 +50,14 @@
 #include <asm/unaligned.h>
 #include <asm/dma.h>
 #include <asm/cacheflush.h>
+#include <asm/uaccess.h>
+
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+#ifdef CONFIG_USB_GADGET_UDCDEV
+#include <linux/usb/udcdev_user.h>
+#include "udcdev.h"
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
 
 #include "fsl_usb2_udc.h"
 
@@ -91,6 +100,41 @@ static void fsl_ep_fifo_flush(struct usb_ep *_ep);
 /********************************************************************
  *	Internal Used Function
 ********************************************************************/
+
+/* 2009/10/13, Modified by panasonic >>>>  */
+#ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT
+
+/*!
+ *  Read register of ULPI-PHY
+ */
+static  __attribute__((unused)) u8 ulpi_read_phy(const u8 port, const u8 addr)
+{
+    u32 val;
+    fsl_writel(ULPIRUN|ULPIPORT(port)|ULPIADDR(addr), &dr_regs->ulpivp);
+    while(1){
+       val =  fsl_readl(&dr_regs->ulpivp);
+       if(!(val&ULPIRUN))
+           break;
+    }
+    return (val&ULPIDATRD_MSK)>>ULPIDATRD_SHIFT;
+}
+
+/*!
+ *  Write register of ULPI-PHY
+ */
+static  __attribute__((unused)) void ulpi_write_phy(const u8 port, const u8 addr, const u8 val)
+{
+    fsl_writel(ULPIRUN|ULPIRW|ULPIPORT(port)|ULPIADDR(addr)|ULPIDATWR(val), &dr_regs->ulpivp);
+    while(1){
+        if(!(fsl_readl(&dr_regs->ulpivp)&ULPIRUN))
+            break;
+    }
+}
+
+#endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT */
+/* <<<< 2009/10/13, Modified by panasonic */
+
+
 /*-----------------------------------------------------------------
  * done() - retire a request; caller blocked irqs
  * @status : request status to be set, only works when
@@ -262,6 +306,23 @@ static int dr_controller_setup(struct fsl_udc *udc)
 	tmp |= 0x80000000;	/* starts from 0x8000000, size 2G */
 	__raw_writel(tmp, &usb_sys_regs->snoop2);
 #endif
+
+/* 2009/10/13, Modified by panasonic >>>>  */
+#ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS
+    VDBG("Select internal VbusValid indicator for RXCMD VbusValid\n");
+   /* clear IndicatorComplement & IndicatorPassThru */
+    ulpi_write_phy(0,0x09,0x60);
+    /* clear UseExternalVbusIndicator */
+    ulpi_write_phy(0,0x0C,0x80);
+/*     { */
+/*         int i; */
+/*         printk(KERN_INFO ">>>>>>>>>>>%s(%d)\n",__FUNCTION__,__LINE__); */
+/*         for(i=0;i<=0x18;i++){ */
+/*             printk(KERN_INFO "**** ulpi[%02X]=0x%02X\n",i,ulpi_read_phy(0,i)); */
+/*         } */
+/*     } */
+#endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS */
+/* <<<< 2009/10/13, Modified by panasonic  */
 
 	return 0;
 }
@@ -1117,6 +1178,70 @@ static int fsl_pullup(struct usb_gadget *gadget, int is_on)
 	return 0;
 }
 
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+
+#ifdef CONFIG_USB_GADGET_UDCDEV
+
+static int fsl_check_connection(struct usb_gadget *gadget)
+{
+    struct fsl_udc *udc =  container_of(gadget, struct fsl_udc, gadget);
+    int connection;
+    unsigned long flags;
+
+    spin_lock_irqsave(&udc->lock, flags);
+    connection = fsl_readl(&dr_regs->portsc1)&PORTSCX_CURRENT_CONNECT_STATUS;
+    spin_unlock_irqrestore(&udc->lock, flags);
+
+    return connection;
+}
+
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+
+/* ioctl method
+ *
+ */
+static int fsl_ioctl(struct usb_gadget *gadget, unsigned cmd, unsigned long arg)
+{
+    int retval=0; 
+
+    if (unlikely(!gadget)) {
+        retval=-EINVAL;
+        goto failed;
+    }
+
+    switch (cmd) {
+
+#ifdef CONFIG_USB_GADGET_UDCDEV
+
+    case UDCDEV_IOC_CHK_CONNECT:
+        if (unlikely(!arg)) {
+            retval = -EINVAL;
+            dev_err(&gadget->dev, "ERROR: invalid parameter : arg=0x%lx\n", arg);
+            goto failed;
+        } else {
+            int connection = fsl_check_connection(gadget);
+            if (copy_to_user((void __user *)arg, (void*)&connection, sizeof(int))) {
+                retval = -EFAULT;
+                dev_err(&gadget->dev, "ERROR: copy_to_user() is failed\n");
+                goto failed;
+            }
+        }
+        break;
+
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+
+    default:
+        retval = -ENOTTY;
+
+    }
+
+ failed:
+    return retval;
+}
+
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
+
+
 /* defined in gadget.h */
 static struct usb_gadget_ops fsl_gadget_ops = {
 	.get_frame = fsl_get_frame,
@@ -1125,6 +1250,14 @@ static struct usb_gadget_ops fsl_gadget_ops = {
 	.vbus_session = fsl_vbus_session,
 	.vbus_draw = fsl_vbus_draw,
 	.pullup = fsl_pullup,
+
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+    .ioctl = fsl_ioctl,
+#ifdef CONFIG_USB_GADGET_UDCDEV
+    .check_connection = fsl_check_connection,
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
+
 };
 
 /* Set protocol stall on ep0, protocol stall will automatically be cleared
@@ -1316,6 +1449,22 @@ static void setup_received_irq(struct fsl_udc *udc,
 		} else if ((setup->bRequestType & (USB_RECIP_MASK
 				| USB_TYPE_MASK)) == (USB_RECIP_DEVICE
 				| USB_TYPE_STANDARD)) {
+			
+			/* Modified by Panasonic (SAV), 2008-Dec-18                     */
+			{
+				/* Set "Test Mode" by the selected device feature command   */
+				if( ( setup->bRequest == USB_REQ_SET_FEATURE ) &&
+					( setup->wValue == 0x200 ) &&   /* Test Mode            */
+					( setup->wIndex != 0 ) &&       /* Test number          */
+					( setup->wLength == 0 ) ){
+						u32 portsc  = fsl_readl( &dr_regs->portsc1 );
+						portsc = ( portsc & 0xffff0000 ) | ( setup->wIndex << 16 );
+						fsl_writel( portsc, &dr_regs->portsc1 );
+						printk("setup_received_irq() : Set Test Mode = %d\n", setup->wIndex );
+				}
+			}
+			/* End of Modify: Panasonic (SAV), 2008-Dec-28  */
+
 			/* Note: The driver has not include OTG support yet.
 			 * This will be set when OTG support is added */
 			if (!gadget_is_otg(&udc->gadget))
@@ -1774,6 +1923,56 @@ static irqreturn_t fsl_udc_irq(int irq, void *_udc)
 	spin_unlock_irqrestore(&udc->lock, flags);
 	return status;
 }
+
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+
+#ifdef CONFIG_USB_GADGET_UDCDEV
+
+/*
+ * Kernel timer function to check USB connection
+ */
+static void udc_check_connection(unsigned long arg)
+{
+    struct fsl_udc *udc = (struct fsl_udc*)arg;
+    enum {NOCHG=0,ATTACH,DETACH} state=NOCHG;
+    u32 new_connection;
+    unsigned long flags;
+
+    spin_lock_irqsave(&udc->lock,flags);
+    new_connection=fsl_readl(&dr_regs->portsc1)&PORTSCX_CURRENT_CONNECT_STATUS;
+    if (new_connection) {
+        if (!udc->last_connection)
+            state = ATTACH;
+    } else {
+        if (udc->last_connection)
+            state = DETACH;
+    }
+    udc->last_connection = new_connection;
+    spin_unlock_irqrestore(&udc->lock,flags);
+
+    switch (state) {
+    case ATTACH:
+        dev_info(&udc->gadget.dev, "*** ATTACHED\n");
+        udcdev_change_connection();
+        break;
+    case DETACH:
+        dev_info(&udc->gadget.dev, "*** DETACHED\n");
+        udcdev_change_connection();
+        break;
+    case NOCHG:
+    default:
+        /* nothing to do */
+        break;
+    }
+
+    udc->connect_timer.expires = jiffies + msecs_to_jiffies(10); /* 10msec */
+    add_timer(&udc->connect_timer);
+}
+
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
+
 
 /*----------------------------------------------------------------*
  * Hook to gadget drivers
@@ -2369,7 +2568,39 @@ static int __init fsl_udc_probe(struct platform_device *pdev)
 		goto err4;
 	}
 	create_proc_file();
+
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+#ifdef CONFIG_USB_GADGET_UDCDEV
+
+    /* timer_list for check connection */
+    udc_controller->last_connection=fsl_readl(&dr_regs->portsc1)&PORTSCX_CURRENT_CONNECT_STATUS;
+    init_timer(&udc_controller->connect_timer);
+    udc_controller->connect_timer.data = (unsigned long)udc_controller;
+    udc_controller->connect_timer.function = udc_check_connection;
+    udc_controller->connect_timer.expires = jiffies + msecs_to_jiffies(10); /* 10msec */
+    add_timer(&udc_controller->connect_timer);
+
+    /*  */
+    ret = udcdev_init(&udc_controller->gadget);
+    if(ret<0)
+        goto err5;
+
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
+
 	return 0;
+
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+#ifdef CONFIG_USB_GADGET_UDCDEV
+
+err5:
+    del_timer_sync(&udc_controller->connect_timer);
+
+	/* DR has been stopped in usb_gadget_unregister_driver() */
+	remove_proc_file();
+
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
 
 err4:
 	device_unregister(&udc_controller->gadget.dev);
@@ -2392,9 +2623,21 @@ static int __exit fsl_udc_remove(struct platform_device *pdev)
 
 	DECLARE_COMPLETION(done);
 
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+#ifdef CONFIG_USB_GADGET_UDCDEV
+    udcdev_cleanup();
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
+
 	if (!udc_controller)
 		return -ENODEV;
 	udc_controller->done = &done;
+
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+#ifdef CONFIG_USB_GADGET_UDCDEV
+    del_timer_sync(&udc_controller->connect_timer);
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
 
 	/* DR has been stopped in usb_gadget_unregister_driver() */
 	remove_proc_file();

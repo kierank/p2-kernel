@@ -99,3 +99,7 @@ obj-$(CONFIG_OF)		+= of/
 obj-$(CONFIG_SSB)		+= ssb/
 obj-$(CONFIG_VIRTIO)		+= virtio/
 obj-$(CONFIG_REGULATOR)		+= regulator/
+
+## Panasonic Original ##
+obj-$(CONFIG_P2PF)		+= p2pf/
+##--------------------##

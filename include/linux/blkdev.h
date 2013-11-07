@@ -108,6 +108,19 @@ enum rq_flag_bits {
 	__REQ_COPY_USER,	/* contains copies of user pages */
 	__REQ_INTEGRITY,	/* integrity metadata has been remapped */
 	__REQ_NR_BITS,		/* stops here */
+/* Added by Panasonic for RT Control and delayproc -->*/
+	__REQ_RT,		/* Realtime Request */
+	__REQ_DRCT,		/* PCI Direct Transfer */
+	__REQ_SEQ,		/* Sequencial Read/Write */
+	__REQ_FAT,		/* fat table io request */
+	__REQ_DIRENT,		/* dirent io request */
+/* <-- Added by Panasonic for RT Control and delayproc */
+/* Modified by Panasonic (SAV), 2009-sep-28 */
+	__REQ_FSINFO,		/* fs info io request */
+	__REQ_AV_DATA,		/* AV Data io request */
+	__REQ_FS_DATA,		/* FS Data io request */
+/*------------------------------------------*/
+	__REQ_MI,		/* MI Data io request -- Added by Panasonic */
 };
 
 #define REQ_RW		(1 << __REQ_RW)
@@ -130,6 +143,19 @@ enum rq_flag_bits {
 #define REQ_RW_META	(1 << __REQ_RW_META)
 #define REQ_COPY_USER	(1 << __REQ_COPY_USER)
 #define REQ_INTEGRITY	(1 << __REQ_INTEGRITY)
+/* Added by Panasonic for RT Control and delayproc -->*/
+#define REQ_RT          (1 << __REQ_RT)
+#define REQ_DRCT        (1 << __REQ_DRCT)
+#define REQ_SEQ         (1 << __REQ_SEQ)
+#define REQ_FAT		(1 << __REQ_FAT)
+#define REQ_DIRENT	(1 << __REQ_DIRENT)
+/* <--Added by Panasonic for RT Control and delayproc */
+/* Modified by Panasonic (SAV), 2009-sep-28 */
+#define REQ_FSINFO	(1 << __REQ_FSINFO)
+#define REQ_AV_DATA	(1 << __REQ_AV_DATA)
+#define REQ_FS_DATA	(1 << __REQ_FS_DATA)
+/*------------------------------------------*/
+#define REQ_MI		(1 << __REQ_MI) /* Added by Panasonic for delayproc */
 
 #define BLK_MAX_CDB	16
 
@@ -182,6 +208,8 @@ struct request {
 	void *elevator_private;
 	void *elevator_private2;
 
+	struct list_head waitlist; /* Added by Panasonic for delayproc */
+	
 	struct gendisk *rq_disk;
 	unsigned long start_time;
 
@@ -560,6 +588,19 @@ enum {
  */
 #define rq_is_sync(rq)		(rq_data_dir((rq)) == READ || (rq)->cmd_flags & REQ_RW_SYNC)
 #define rq_is_meta(rq)		((rq)->cmd_flags & REQ_RW_META)
+/* Added by Panasonic for RT Control and delayproc -->*/
+#define rq_is_rt(rq)		(rq->cmd_flags & REQ_RT)
+#define rq_is_drct(rq)		(rq->cmd_flags & REQ_DRCT)
+#define rq_is_seq(rq)		(rq->cmd_flags & REQ_SEQ)
+#define rq_is_fat(rq)		((rq)->cmd_flags & REQ_FAT)
+#define rq_is_dirent(rq)	((rq)->cmd_flags & REQ_DIRENT)
+/* <--Added by Panasonic for RT Control and delayproc */
+/* Modified by Panasonic (SAV), 2009-sep-28 */
+#define rq_is_fsinfo(rq)	((rq)->cmd_flags & REQ_FSINFO)
+#define rq_is_av_data(rq)	((rq)->cmd_flags & REQ_AV_DATA)
+#define rq_is_fs_data(rq)	((rq)->cmd_flags & REQ_FS_DATA)
+/*------------------------------------------*/
+#define rq_is_mi(rq)		((rq)->cmd_flags & REQ_MI)
 
 static inline int blk_queue_full(struct request_queue *q, int rw)
 {

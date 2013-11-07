@@ -211,6 +211,7 @@ struct pcmcia_socket {
 
 	/* socket capabilities */
 	u_int				features;
+        u_int                           last_events;
 	u_int				irq_mask;
 	u_int				map_size;
 	u_int				io_offset;

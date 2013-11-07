@@ -60,6 +60,7 @@ struct bio_vec {
 	struct page	*bv_page;
 	unsigned int	bv_len;
 	unsigned int	bv_offset;
+	unsigned long	bv_private; /* Added by Panasonic for RT */
 };
 
 struct bio_set;
@@ -117,6 +118,8 @@ struct bio {
 	struct bio_integrity_payload *bi_integrity;  /* data integrity */
 #endif
 
+	void			*bi_private2; /* Added by Panasonic for RT */
+
 	bio_destructor_t	*bi_destructor;	/* destructor */
 };
 
@@ -156,6 +159,21 @@ struct bio {
 #define BIO_RW_FAILFAST	3
 #define BIO_RW_SYNC	4
 #define BIO_RW_META	5
+/* Added by Panasonic for RT control and delayproc --> */
+#define BIO_RW_RT	6
+#define BIO_RW_DRCT	7
+#define BIO_RW_FAT	8
+#define BIO_RW_DIRENT	9
+#define BIO_RW_SEQ	10
+#define BIO_RW_DUMMY	11
+#define BIO_RW_SLAVE	12
+/* <-- Added by Panasonic for RT control and delayproc */
+/* Modified by Panasonic (SAV), 2009-sep-28 */
+#define BIO_RW_FSINFO	13
+#define BIO_RW_AV_DATA	14
+#define BIO_RW_FS_DATA	15
+/*------------------------------------------*/
+#define BIO_RW_MI	16 /* Added by Panasonic for delayproc */
 
 /*
  * upper 16 bits of bi_rw define the io priority of this bio
@@ -186,6 +204,20 @@ struct bio {
 #define bio_rw_ahead(bio)	((bio)->bi_rw & (1 << BIO_RW_AHEAD))
 #define bio_rw_meta(bio)	((bio)->bi_rw & (1 << BIO_RW_META))
 #define bio_empty_barrier(bio)	(bio_barrier(bio) && !(bio)->bi_size)
+/* Added by Panasonic for RT control and delayproc --> */
+#define bio_rt(bio)             ((bio)->bi_rw & (1 << BIO_RW_RT))
+#define bio_drct(bio)           ((bio)->bi_rw & (1 << BIO_RW_DRCT))
+#define bio_seq(bio)            ((bio)->bi_rw & (1 << BIO_RW_SEQ))
+#define bio_fat(bio)		((bio)->bi_rw & (1 << BIO_RW_FAT))
+#define bio_dirent(bio)		((bio)->bi_rw & (1 << BIO_RW_DIRENT))
+/* <-- Added by Panasonic for RT control and delayproc */
+/* Modified by Panasonic (SAV), 2009-sep-28 */
+#define bio_fsinfo(bio)		((bio)->bi_rw & (1 << BIO_RW_FSINFO))
+#define bio_av_data(bio)	((bio)->bi_rw & (1 << BIO_RW_AV_DATA))
+#define bio_fs_data(bio)	((bio)->bi_rw & (1 << BIO_RW_FS_DATA))
+/*------------------------------------------*/
+#define bio_mi(bio)		((bio)->bi_rw & (1 << BIO_RW_MI)) /* Added by Panasonic for delayproc */
+
 
 static inline unsigned int bio_cur_sectors(struct bio *bio)
 {
@@ -197,6 +229,7 @@ static inline unsigned int bio_cur_sectors(struct bio *bio)
 
 static inline void *bio_data(struct bio *bio)
 {
+	if (bio_drct(bio)) return NULL; /* Added by Panasonic for RT */
 	if (bio->bi_vcnt)
 		return page_address(bio_page(bio)) + bio_offset(bio);
 

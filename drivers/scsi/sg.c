@@ -1486,11 +1486,15 @@ sg_add(struct device *cl_dev, struct class_interface *cl_intf)
 					"'generic' back to sg%d\n", sdp->index);
 	} else
 		printk(KERN_WARNING "sg_add: sg_sys Invalid\n");
-
+#if defined(CONFIG_DISABLE_SDPROBE_MESSAGE)
+	sdev_printk(KERN_DEBUG, scsidp,
+		    "Attached scsi generic sg%d type %d\n", sdp->index,
+		    scsidp->type);
+#else /* ! CONFIG_DISABLE_SDPROBE_MESSAGE */
 	sdev_printk(KERN_NOTICE, scsidp,
 		    "Attached scsi generic sg%d type %d\n", sdp->index,
 		    scsidp->type);
-
+#endif /* CONFIG_DISABLE_SDPROBE_MESSAGE */
 	dev_set_drvdata(cl_dev, sdp);
 
 	return 0;

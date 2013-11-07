@@ -1,0 +1,65 @@
+# drivers/p2pf/zion/VGA/Kconfig
+
+if FB && ZION_PCI
+menu "ZION VGA Driver"
+
+config ZION_VGA
+	bool "Support ZION VGA"
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+
+	  If unsure, say Y.
+
+if ZION_VGA
+config ZION_VGA_AUTOMATIC_UPDATE
+        bool "Update Display Image Automatically"
+        help
+          Select this option if you don't have magic firmware for drivers that
+          need it.
+
+          If unsure, say Y.
+
+config ZION_VGA_DMA_DIRECTION_CHANGE
+	bool "Change FB Region for each DMA Transfer"
+        help
+          Select this option if you don't have magic firmware for drivers that
+          need it.
+
+          If unsure, say Y.
+
+config ZION_FB_SETUP
+        bool "Set FrameBuffer Address"
+        help
+          Select this option if you don't have magic firmware for drivers that
+          need it.
+
+          If unsure, say Y.
+
+config ZION_FB_FIRST_ADDR
+	hex "First Frame Buffer" if ZION_FB_SETUP
+	default 07E60000
+
+config ZION_FB_SECOND_ADDR
+	hex "Second Frame Buffer" if ZION_FB_SETUP
+	default 07F30000
+
+config ZION_RESOLUTION_SETUP
+        bool "Set Resolution Size"
+        help
+          Select this option if you don't have magic firmware for drivers that
+          need it.
+          If unsure, say Y.
+
+config ZION_X_RESOLUTION
+	int "X Resolution" if ZION_RESOLUTION_SETUP
+	default 640
+
+config ZION_Y_RESOLUTION
+	int "Y Resolution" if ZION_RESOLUTION_SETUP
+	default 480 
+
+endif
+
+endmenu
+endif

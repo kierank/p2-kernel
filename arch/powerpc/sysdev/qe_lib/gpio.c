@@ -134,6 +134,9 @@ static int __init qe_add_gpiochips(void)
 		gc->get = qe_gpio_get;
 		gc->set = qe_gpio_set;
 
+        /* 2009/12/1, Added by Panasonic */
+        gc->base = -1;          /* dynamic allocation of GPIOs */
+
 		ret = of_mm_gpiochip_add(np, mm_gc);
 		if (ret)
 			goto err;

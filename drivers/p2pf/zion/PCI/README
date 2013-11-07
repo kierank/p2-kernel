@@ -1,0 +1,162 @@
+＜NEOドライバPCI部 API＞
+
+0. PCI部の役割
+NEOドライバPCI部は、SDRAM領域へのアクセスとPCIコンフィグレジスタへのアクセスを提供する。
+なお、PCI部のマイナー番号は include/linux/zion.h にて定義された ZION_PCI マクロをもとに以下のように定義されている。
+
+ZION_PCI+0: PCI Config Addrアクセス、PIOアクセス 他
+ZION_PCI+1: DMA Channel CH0 を用いたDMAアクセス
+ZION_PCI+2: DMA Channel CH1 を用いたDMAアクセス
+ZION_PCI+3: DMA Channel CH2 を用いたDMAアクセス
+ZION_PCI+4: DMA Channel CH3 を用いたDMAアクセス
+ZION_PCI+5: DMA Channel CH4 を用いたDMAアクセス
+ZION_PCI+6: DMA Channel CH5 を用いたDMAアクセス
+ZION_PCI+7: DMA Channel CH6 を用いたDMAアクセス
+ZION_PCI+8: DMA Channel CH7 を用いたDMAアクセス
+
+1. Linuxのsystemcall write / read / lseek を用いたSDRAMへのアクセス
+ZIONドライバPCI部は、Linuxの標準的なsystemcallである write/read/lseekを使ってSDRAMの内容にアクセスする手段を提供している。
+
+1.1 PIOポートへの write/read/lseek
+・SDRAMのサイズを越えた部分を含む領域をread/writeしようとした場合、read/writeはSDRAMの末尾までおこなわれ、返値は実際にread/writeしたサイズとなる。
+・SDRAM末尾を越えた部分にseekすることはできない。試みた場合は、ファイル位置はそのままで返値は-EINVALとなる。
+・read/writeの開始位置、および読み込みサイズは4byteの倍数である必要がある。
+
+1.2 DMAポートへの write/read/lseek
+・この操作は、ZIONがMASTER動作有効の状態でコンパイルされていないと実行することはできない。
+・write/readの前に、ioctlを使ってDMA範囲の指定をしておく必要がある。
+・その他の条件はPIOポートの場合と同じ
+
+2. ioctlを使ったDMA範囲の指定
+DMAによる転送を行う場合は、事前にDMA範囲の設定を行う必要がある。ZIONドライバPCI部は、これをioctlを用いて提供している。
+commandは以下の通りである。これは全てのポートについて実行可能であるが、DMAポートに対して実行した場合は、変数dma_chが無視される。
+
+関数名：
+    ZION_SET_DMA_REGION
+    ZION_GET_DMA_REGION
+機能：
+    DMAに使用するSDRAM領域の設定/読み込み
+引数：
+  struct zion_sdram_region へのポインタ
+  struct zion_sdram_region
+   {
+     int dma_ch;  /* 設定/読み込みするDMAチャンネル */
+     unsigned long lower; /* SDRAMの下限アドレス */
+     unsigned long upper; /* SDRAMの上限アドレス */
+   };
+備考：
+    lower < upper でなくてはならない。
+    また、lower と upper はともに偶数でなければならない。
+
+
+3. ioctlを使った SDRAM へのアクセス
+ZIONドライバPCI部は、PIOポートに対するioctlを用いてSDRAMの内容にアクセスする手段を提供している。
+
+関数名：
+    ZION_SDRAM_PIO_READ
+    ZION_SDRAM_PIO_WRITE
+機能：
+　　SDRAM領域へのPIOアクセスによるRead/Write
+引数：
+    struct zion_buf へのポインタ
+　　struct zion_buf
+     {
+       unsigned long addr;  /* 各モジュール内でのオフセットアドレス */
+       unsigned long size;   /* 書き込むデータのサイズ */
+       void *buf;           /* データの実体 */
+       char access_type;    /* SDRAMアクセスでは意味を持たない。 */
+       int dma_ch;          /* PIOアクセスでは関係ない */
+     };
+備考：
+    ioctlの使用者がSDRAMマッピングの「小窓」を意識する必要はない。
+    SDRAMの任意の場所を、任意のサイズでRead/Writeできる
+    (現段階のドライバでは、先頭アドレス、データサイズともに4の倍数であることが要求される)。
+    ただし、addr+sizeがSDRAMの容量を超えている場合は、ioctlがエラーで終了する。
+---
+関数名：
+    ZION_SDRAM_DMA_READ
+    ZION_SDRAM_DMA_WRITE
+機能：
+    SDRAM領域へのDMAアクセスによるRead/Write
+引数：
+    struct zion_buf へのポインタ
+　　struct zion_buf
+     {
+       unsigned long addr;  /* 各モジュール内でのオフセットアドレス */
+       unsigned long size;   /* 書き込むデータのサイズ */
+       void *buf;           /* データの実体 */
+       char access_type;    /* SDRAMアクセスでは意味を持たない。 */
+       int dma_ch;          /* 使用するDMAチャンネル */
+     };
+備考：
+    現段階のドライバでは、先頭アドレス、データサイズともに4の倍数であることが要求される。
+備考2：
+    DMAを発行するためには、事前にZION_SET_DMA_REGIONで
+    使用するSDRAMの領域を指定しておく必要がある。
+    この領域をはみでたRead/Writeに関しては、エラーで終了する。
+
+
+4. ioctlを使った PCI Config レジスタへのアクセス
+ZIONドライバPCI部は、ioctlを使ってZIONのPCIコンフィグレジスタにアクセスする手段を提供している。
+このioctlはPIOポートに対してのみ有効である。commandは以下のとおり。
+
+関数名：
+　　ZION_PCI_READ_CONFIG_BYTE
+　　ZION_PCI_WRITE_CONFIG_BYTE
+機能：
+　　PCI Config Reg.のバイト単位のRead/Write
+引数：
+　　struct zion_config_byte へのポインタ
+　　struct zion_config_byte
+     {
+       int where;  /* 各モジュール内でのオフセットアドレス */
+       unsigned char val;  /* whereに設定する値 */
+     };
+---
+関数名：
+　　ZION_PCI_READ_CONFIG_WORD
+　　ZION_PCI_WRITE_CONFIG_WORD
+機能：
+　　PCI Config Reg.のワード単位のRead/Write
+引数：
+　　struct zion_config_word へのポインタ
+　　struct zion_config_word
+     {
+       int where;  /* 各モジュール内でのオフセットアドレス */
+       unsigned short val;  /* whereに設定する値 */
+     };
+---
+関数名：
+　　ZION_PCI_READ_CONFIG_DWORD
+　　ZION_PCI_WRITE_CONFIG_DWORD
+機能：
+　　PCI Config Reg.のダブルワード単位のRead/Write
+引数：
+　　struct zion_config_dword へのポインタ
+　　struct zion_config_dword
+     {
+       int where;  /* 各モジュール内でのオフセットアドレス */
+       unsigned int val;  /* whereに設定する値 */
+     };
+---
+関数名：
+    ZION_SDRAM_DMA_READ_BUS_ADDR
+    ZION_SDRAM_DMA_WRITE_BUS_ADDR
+機能：
+    ZION_SDRAM_DMA_READ / ZION_SDRAM_DMA_WRITE において、
+    struct zion_buf の *buf に直接 PCIバスアドレスを
+    指定したときに用いるデバッグ用命令
+---
+関数名：
+    ZION_GET_SDRAM_BUS_ADDR
+機能：
+    ZION SDRAMのベースアドレスの取得
+引数：
+    unsigned long型変数へのポインタ
+---
+関数名：
+    ZION_GET_SDRAM_SIZE
+機能：
+    ZION SDRAMのサイズの取得
+引数：
+    unsigned long型変数へのポインタ

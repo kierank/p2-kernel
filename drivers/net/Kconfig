@@ -3,6 +3,8 @@
 # Network device configuration
 #
 
+## $Id: Kconfig 5237 2010-02-18 00:25:41Z Noguchi Isao $
+
 menuconfig NETDEVICES
 	default y if UML
 	depends on NET
@@ -2238,6 +2240,73 @@ config GIANFAR
 	help
 	  This driver supports the Gigabit TSEC on the MPC83xx, MPC85xx,
 	  and MPC86xx family of chips, and the FEC on the 8540.
+
+## Added by Panasonic, 2009/09/29 >>>>
+
+menuconfig GIANFAR_EXTENTION
+	bool "Suppport extended settings for Gianfar Ethernet"
+    default n
+	depends on GIANFAR
+	help
+	  Extended settings for Gianfar Ethernet driver
+
+if GIANFAR_EXTENTION
+
+config GIANFAR_EXTENTION_PROC_FS
+    bool "Support proc_fs"
+    default n
+    depends on PROC_FS
+    help
+        Support proc_fs entry (under /proc/driver/gianfar directry)
+
+config GIANFAR_EXTENTION_MIIREG
+	bool "Support Mii registes interface"
+    default n
+    help
+        Support Mii registes interface
+
+config GIANFAR_EXTENTION_DSAS
+	bool "Support DoS Attack Shielding (DSAS)"
+    default n
+    help
+        Support DoS Attack Shielding (DSAS) for Gianfar Ethernet driver
+
+config GIANFAR_DSAS_IVAL
+	int "interval period to measure the number of the rx-packets [msec]"
+    default 100
+    depends on GIANFAR_EXTENTION_DSAS
+    help
+        Set value of interval period to measure the number of the reception packets
+        for DoS Attack Shielding (DSAS).
+
+config GIANFAR_DSAS_MAX_MEASURE_PERIOD
+	int "maximam period to measure the number of the rx-packets [msec]"
+    default 5000
+    depends on GIANFAR_EXTENTION_DSAS
+    help
+        Set value of maximam period to measure the number of the reception packets
+        for DoS Attack Shielding (DSAS).
+
+config GIANFAR_DSAS_ESTIMATE_PERIOD
+	int "estimate period to got rx-packet number for threshold [msec]"
+    default 1000
+    depends on GIANFAR_EXTENTION_DSAS
+    help
+        Set value of estimate period to got rx-packet number for threshold
+        for DoS Attack Shielding (DSAS).
+
+config GIANFAR_DSAS_HWBLOCK_PERIOD
+	int "period to stay in H/W blocking state [msec]"
+    default 500
+    depends on GIANFAR_EXTENTION_DSAS
+    help
+        Set value of period to stay in H/W blocking state
+        for DoS Attack Shielding (DSAS).
+
+endif # GIANFAR_EXTENTION
+
+## <<< Added by Panasonic, 2009/09/29
+
 
 config UCC_GETH
 	tristate "Freescale QE Gigabit Ethernet"

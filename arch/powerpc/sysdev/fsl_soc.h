@@ -1,3 +1,5 @@
+/* $Id: fsl_soc.h 5088 2010-02-09 02:49:16Z Sawada Koji $ */
+
 #ifndef __PPC_FSL_SOC_H
 #define __PPC_FSL_SOC_H
 #ifdef __KERNEL__
@@ -11,6 +13,10 @@ extern u32 fsl_get_sys_freq(void);
 
 struct spi_board_info;
 struct device_node;
+
+/* 2009/12/7, added by Panasonic */
+extern int fsl_spi_board_info(struct spi_board_info *board_infos,
+                                     unsigned int num_board_infos);
 
 extern int fsl_spi_init(struct spi_board_info *board_infos,
 			unsigned int num_board_infos,

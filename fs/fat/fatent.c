@@ -460,7 +460,7 @@ int fat_alloc_clusters(struct inode *inode, int *cluster, int nr_cluster)
 	count = FAT_START_ENT;
 	fatent_init(&prev_ent);
 	fatent_init(&fatent);
-	fatent_set_entry(&fatent, sbi->prev_free + 1);
+	fatent_set_entry(&fatent, sbi->prev_free);
 	while (count < sbi->max_cluster) {
 		if (fatent.entry >= sbi->max_cluster)
 			fatent.entry = FAT_START_ENT;
@@ -545,10 +545,14 @@ int fat_free_clusters(struct inode *inode, int cluster)
 			err = cluster;
 			goto error;
 		} else if (cluster == FAT_ENT_FREE) {
+		  /**
 			fat_fs_panic(sb, "%s: deleting FAT entry beyond EOF",
 				     __func__);
 			err = -EIO;
 			goto error;
+		  **/
+		  printk("%s: deleting FAT entry beyond EOF (But we must continue ...)",__func__);
+		  break;
 		}
 
 		ops->ent_put(&fatent, FAT_ENT_FREE);
@@ -649,4 +653,28 @@ int fat_count_free_clusters(struct super_block *sb)
 out:
 	unlock_fat(sbi);
 	return err;
+}
+
+int fat_set_prev_free(struct super_block *sb, unsigned int new_prev_free)
+{
+	struct msdos_sb_info *sbi = MSDOS_SB(sb);
+
+	if(new_prev_free > MAX_FAT(sb)){
+		return -EINVAL;
+	}
+
+	if(new_prev_free >= sbi->max_cluster){
+		return -EINVAL;
+	}
+
+	if(new_prev_free < FAT_START_ENT){
+		return -EINVAL;
+	}
+
+	lock_fat(sbi);
+	sbi->prev_free = new_prev_free;
+	sb->s_dirt = 1;
+	unlock_fat(sbi);
+
+	return 0;
 }

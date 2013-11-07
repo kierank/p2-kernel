@@ -42,6 +42,7 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* $Id: scsiglue.c 13963 2011-04-19 02:42:59Z Noguchi Isao $ */
 
 #include <linux/slab.h>
 #include <linux/module.h>
@@ -52,6 +53,13 @@
 #include <scsi/scsi_devinfo.h>
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_eh.h>
+
+/* 2010/5/18, modified by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+#include <scsi/scsi_ioctl.h>
+#include <scsi/sdc.h>
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <== 2010/5/18, modified by Panasonic */
 
 #include "usb.h"
 #include "scsiglue.h"
@@ -114,6 +122,7 @@ static int slave_alloc (struct scsi_device *sdev)
 static int slave_configure(struct scsi_device *sdev)
 {
 	struct us_data *us = host_to_us(sdev->host);
+    struct usb_device *udev = us->pusb_dev; /* 2010/10/06, modified by Panasonic (SAV) */
 
 	/* Many devices have trouble transfering more than 32KB at a time,
 	 * while others have trouble with more than 64K. At this time we
@@ -127,6 +136,11 @@ static int slave_configure(struct scsi_device *sdev)
 		if (sdev->request_queue->max_sectors > max_sectors)
 			blk_queue_max_sectors(sdev->request_queue,
 					      max_sectors);
+/* 2010/10/06, modified by Panasonic (SAV) ---> */
+    } else if (udev->bus->max_sectors) {
+        blk_queue_max_sectors(sdev->request_queue,
+                              udev->bus->max_sectors);
+/* <--- 2010/10/06, modified by Panasonic (SAV) */
 	}
 
 	/* We can't put these settings in slave_alloc() because that gets
@@ -256,6 +270,171 @@ static int queuecommand(struct scsi_cmnd *srb,
 	return 0;
 }
 
+
+
+/* 2010/5/18, modified by Panasonic (SAV)
+   2010/10/18, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+static int get_devinfo(struct scsi_device *dev, void *devinfo)
+{
+    int retval = 0;
+    struct sdc_usbp_info info;
+    struct us_data *us=NULL;
+    struct scsi_ioctl_usb_info *uinfo
+        = (struct scsi_ioctl_usb_info *)devinfo;
+
+    if(!uinfo||!dev)
+        return -EINVAL;
+
+    us = host_to_us(dev->host);
+    if(!us)
+        return -ENXIO;
+
+    retval = get_usb_device_info(dev->host, &info);
+    if(retval<0){
+        retval = -ENXIO;
+        goto exit;
+    }
+
+    uinfo->max_lun = info.usb_max_lun;
+    uinfo->vendor_id = info.usb_vendor_id;
+    uinfo->product_id = info.usb_product_id;
+    uinfo->subclass = info.subclass;
+    uinfo->protocol = us->protocol;
+    uinfo->t_bus = info.topology_bus;
+    uinfo->t_level = info.topology_level;
+    uinfo->t_port = info.topology_port;
+    {
+        struct usb_device *top_dev=NULL;
+        for (top_dev = us->pusb_dev;
+             top_dev->parent && top_dev->parent->parent; top_dev = top_dev->parent){
+            /* Found device below root hub */
+        }
+        uinfo->t_rootport = top_dev->vportnum - 1;;
+    }
+    uinfo->t_route = us->pusb_dev->route;
+    uinfo->t_devno = info.topology_devnum;
+    memset(uinfo->vendor,0,SCSI_IOCTL_USB_STRING_LEN);
+    if(us->pusb_dev->product)
+        strncpy(uinfo->vendor,us->pusb_dev->product,SCSI_IOCTL_USB_STRING_LEN);
+    memset(uinfo->product,0,SCSI_IOCTL_USB_STRING_LEN);
+    if(us->pusb_dev->manufacturer)
+        strncpy(uinfo->product,us->pusb_dev->manufacturer,SCSI_IOCTL_USB_STRING_LEN);
+    memset(uinfo->serial,0,SCSI_IOCTL_USB_STRING_LEN);
+    if(us->pusb_dev->serial)
+        strncpy(uinfo->serial,us->pusb_dev->serial,SCSI_IOCTL_USB_STRING_LEN);
+
+ exit:
+    return retval;
+}
+
+
+
+static int ioctl(struct scsi_device *dev, int cmd, void __user *arg)
+{
+    int retval=0;
+    struct us_data *us=NULL;
+
+	if (!dev)
+		return -ENXIO;
+
+    us = host_to_us(dev->host);
+    if(!us)
+        return -ENXIO;
+
+    /* main proccess */
+    switch(cmd){
+    case SCSI_IOCTL_GET_HOSTTYPE:
+        retval = SCSI_HOSTTYPE_USB;
+        break;
+
+    case SCSI_IOCTL_GET_DEVINFO:
+        if(arg==NULL){
+            pr_err(USB_STORAGE "ERROR: \"arg\" is NULL pointer\n");
+            retval = -EINVAL;
+            break;
+        }
+        {
+            struct scsi_ioctl_usb_info info;
+            retval = get_devinfo(dev, (void *)&info);
+            if(retval){
+                pr_err(USB_STORAGE "ERROR: fail at get_devinfo()\n");
+                break;
+            }
+            if( copy_to_user((struct scsi_ioctl_usb_info *)arg, &info,
+                             sizeof(struct scsi_ioctl_usb_info)) ){
+                retval = -EFAULT;
+                pr_err(USB_STORAGE "ERROR: Can't accsess the argument..\n");
+                break;
+            }
+        }
+        break;
+
+/* 2011/4/11, added by Panasonic (PAVBU),
+   20011/4/19, modified by Panasonic (PAVBU) ---> */
+
+    case SCSI_IOCTL_SET_US_FFLAGS:
+        {
+            unsigned long fflags = 0;
+            unsigned long val = (unsigned long)arg;
+
+            if(val & SCSI_IOCTL_FFLAG_FAST_RECOVERY)
+                fflags |= US_FL_FAST_RECOVERY; 
+
+            if(val & SCSI_IOCTL_FFLAG_FORCE_BULK_RESET)
+                fflags |= US_FL_FORCE_BULK_RESET; 
+
+            us->fflags |= fflags;
+        }
+        break;
+
+    case SCSI_IOCTL_CLR_US_FFLAGS:
+        {
+            unsigned long fflags = 0;
+            unsigned long val = (unsigned long)arg;
+
+            if(val & SCSI_IOCTL_FFLAG_FAST_RECOVERY)
+                fflags |= US_FL_FAST_RECOVERY; 
+
+            if(val & SCSI_IOCTL_FFLAG_FORCE_BULK_RESET)
+                fflags |= US_FL_FORCE_BULK_RESET; 
+
+            us->fflags &= ~fflags;
+        }
+        break;
+
+    case SCSI_IOCTL_GET_US_FFLAGS:
+        if (arg==NULL){
+            usdev_err(us, "ERROR: \"arg\" is NULL pointer\n");
+            retval = -EINVAL;
+            break;
+        } else {
+            if (copy_to_user(arg, (void*)&us->fflags, sizeof(unsigned long))) {
+                retval = -EFAULT;
+                usdev_err(us, "ERROR: cannot copy to user space\n");
+                break;
+            }
+        }
+        break;
+
+/* <-- 2011/4/11, added by Panasonic (PAVBU),
+   20011/4/19, modified by Panasonic (PAVBU) */
+
+    default:
+        retval = -ENOTTY;
+    }
+
+    /* complete */
+    return retval;
+
+}
+
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <--- 2010/5/18, modified by Panasonic (SAV)
+   2010/10/18, modified by Panasonic (SAV) */
+
+
 /***********************************************************************
  * Error handling functions
  ***********************************************************************/
@@ -265,7 +444,9 @@ static int command_abort(struct scsi_cmnd *srb)
 {
 	struct us_data *us = host_to_us(srb->device->host);
 
-	US_DEBUGP("%s called\n", __func__);
+/* 2011/4/11, modified by Panasonic (PAVBU) */
+	// US_DEBUGP("%s called\n", __func__);
+	usdev_dbg(us, "%s called\n", __func__);
 
 	/* us->srb together with the TIMED_OUT, RESETTING, and ABORTING
 	 * bits are protected by the host lock. */
@@ -286,6 +467,7 @@ static int command_abort(struct scsi_cmnd *srb)
 	set_bit(US_FLIDX_TIMED_OUT, &us->dflags);
 	if (!test_bit(US_FLIDX_RESETTING, &us->dflags)) {
 		set_bit(US_FLIDX_ABORTING, &us->dflags);
+        usdev_info(us, "Command is timeout and abort\n"); /* 2011/4/11, modified by Panasonic (PAVBU) */
 		usb_stor_stop_transport(us);
 	}
 	scsi_unlock(us_to_host(us));
@@ -302,14 +484,25 @@ static int device_reset(struct scsi_cmnd *srb)
 	struct us_data *us = host_to_us(srb->device->host);
 	int result;
 
-	US_DEBUGP("%s called\n", __func__);
+/* 2011/4/11, modified by Panasonic (PAVBU) */
+	//US_DEBUGP("%s called\n", __func__);
+	usdev_dbg(us, "%s called\n", __func__);
 
 	/* lock the device pointers and do the reset */
+    usdev_info(us, "transport reset @ %s(%d).\n", __FUNCTION__, __LINE__); /* 2011/4/11, modified by Panasonic (PAVBU) */
 	mutex_lock(&(us->dev_mutex));
 	result = us->transport_reset(us);
 	mutex_unlock(&us->dev_mutex);
 
-	return result < 0 ? FAILED : SUCCESS;
+/* 2011/4/11, modified by Panasonic (PAVBU) --> */
+/* 	return result < 0 ? FAILED : SUCCESS; */
+    if (result<0) {
+        usdev_err(us, "ERROR: the transport reset is failed (%d) @ %s(%d)\n",
+                  result,  __FUNCTION__, __LINE__);
+        return FAILED;
+    }
+    return SUCCESS;
+/* <-- 2011/4/11, modified by Panasonic (PAVBU) */
 }
 
 /* Simulate a SCSI bus reset by resetting the device's USB port. */
@@ -318,10 +511,63 @@ static int bus_reset(struct scsi_cmnd *srb)
 	struct us_data *us = host_to_us(srb->device->host);
 	int result;
 
-	US_DEBUGP("%s called\n", __func__);
+ /* 2011/4/11, modified by Panasonic (PAVBU) ---> */
+	//US_DEBUGP("%s called\n", __func__);
+	usdev_dbg(us, "%s called\n", __func__);
+
+    if (us->fflags & US_FL_FORCE_BULK_RESET) {
+        usdev_info(us, "Port reset is ignored @ %s(%d).\n",
+                   __FUNCTION__, __LINE__);
+        return SUCCESS;
+    }
+
+    usdev_info(us, "Simulate a SCSI bus reset by reseting the device's USB port @ %s(%d).\n",
+               __FUNCTION__, __LINE__);
 	result = usb_stor_port_reset(us);
-	return result < 0 ? FAILED : SUCCESS;
+    if (result<0) {
+        usdev_err(us, "ERROR: the port reset is failed (%d) @ %s(%d)\n",
+                  result, __FUNCTION__, __LINE__);
+        return FAILED;
+    }
+    return SUCCESS;
+/* 	result = usb_stor_port_reset(us); */
+/* 	return result < 0 ? FAILED : SUCCESS; */
+/* <--- 2011/4/11, modified by Panasonic (PAVBU) */
 }
+
+
+/* 2011/4/19, added by Panasonic (PAVBU) ---> */
+
+/* unjaming handler for hostt */
+static int timed_out(struct scsi_cmnd *srb)
+{
+	struct us_data *us = host_to_us(srb->device->host);
+    int retval;
+
+	usdev_dbg(us, "%s called\n", __func__);
+
+    if (!(us->fflags & US_FL_FAST_RECOVERY))
+        return SCSI_RETURN_NOT_HANDLED;
+
+    if (srb->serial_number == 0)
+        return SUCCESS;
+
+    retval=command_abort(srb);
+    if(retval!=SUCCESS)
+        return retval;
+
+    if (us->fflags & US_FL_FORCE_BULK_RESET)
+        retval=device_reset(srb);
+    else
+        retval=bus_reset(srb);
+    if (retval!=SUCCESS)
+            return retval;
+
+    return SUCCESS;
+}
+
+/* <--- 2011/4/19, added by Panasonic (PAVBU) */
+
 
 /* Report a driver-initiated device reset to the SCSI layer.
  * Calling this for a SCSI-initiated reset is unnecessary but harmless.
@@ -471,10 +717,20 @@ struct scsi_host_template usb_stor_host_template = {
 	/* command interface -- queued only */
 	.queuecommand =			queuecommand,
 
+/* 2010/5/18, modified by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+    .get_devinfo = get_devinfo, 
+    .ioctl =          ioctl,
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <== 2010/5/18, modified by Panasonic */
+
 	/* error and abort handlers */
 	.eh_abort_handler =		command_abort,
 	.eh_device_reset_handler =	device_reset,
 	.eh_bus_reset_handler =		bus_reset,
+
+    /* 2011/4/19, added by Panasonic (PAVBU) */
+    .eh_unjam_host = timed_out,
 
 	/* queue commands only, only one command per LUN */
 	.can_queue =			1,

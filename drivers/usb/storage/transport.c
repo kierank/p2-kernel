@@ -42,6 +42,7 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* $Id: transport.c 13963 2011-04-19 02:42:59Z Noguchi Isao $ */
 
 #include <linux/sched.h>
 #include <linux/errno.h>
@@ -179,6 +180,9 @@ static int usb_stor_msg_common(struct us_data *us, int timeout)
 		US_DEBUGP("%s -- cancelling URB\n",
 			  timeleft == 0 ? "Timeout" : "Signal");
 		usb_kill_urb(us->current_urb);
+		/* Modified by Panasonic (SAV), 2009-sep-24 */
+		return -ETIMEDOUT;
+		/*------------------------------------------*/
 	}
 
 	/* return the URB status */
@@ -243,10 +247,8 @@ int usb_stor_clear_halt(struct us_data *us, unsigned int pipe)
 		USB_ENDPOINT_HALT, endp,
 		NULL, 0, 3*HZ);
 
-	/* reset the endpoint toggle */
 	if (result >= 0)
-		usb_settoggle(us->pusb_dev, usb_pipeendpoint(pipe),
-				usb_pipeout(pipe), 0);
+		usb_reset_endpoint(us->pusb_dev, endp); 
 
 	US_DEBUGP("%s: result = %d\n", __func__, result);
 	return result;
@@ -270,7 +272,9 @@ static int interpret_urb_result(struct us_data *us, unsigned int pipe,
 	/* no error code; did we send all the data? */
 	case 0:
 		if (partial != length) {
-			US_DEBUGP("-- short transfer\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 			US_DEBUGP("-- short transfer\n"); */
+			usdev_err(us, "-- short transfer\n");
 			return USB_STOR_XFER_SHORT;
 		}
 
@@ -279,43 +283,88 @@ static int interpret_urb_result(struct us_data *us, unsigned int pipe,
 
 	/* stalled */
 	case -EPIPE:
-		/* for control endpoints, (used by CB[I]) a stall indicates
-		 * a failed command */
+		/* for control endpoints, (used by CB[I]) a stall indicates a
+		 * failed command */
 		if (usb_pipecontrol(pipe)) {
-			US_DEBUGP("-- stall on control pipe\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 			US_DEBUGP("-- stall on control pipe\n"); */
+			usdev_warn(us, "-- stall on control pipe\n");
 			return USB_STOR_XFER_STALLED;
 		}
 
+/* /\* 2011/4/19, modified by Panasonic (PAVBU) ---> *\/ */
+
+/* 		/\* for bulk endpoints, (used by bulk-only) a stall indicates a */
+/* 		 * failed command *\/ */
+/*         if ((us->fflags & US_FL_FAST_RECOVERY) && (us->protocol == US_PR_BULK)) { */
+/* 			usdev_warn(us, "-- stall on bulk endpoints used by bulk-only\n"); */
+/* 			return USB_STOR_XFER_STALLED; */
+/*         } */
+
+/* /\* <--- 2011/4/19, modified by Panasonic (PAVBU) *\/ */
+
 		/* for other sorts of endpoint, clear the stall */
-		US_DEBUGP("clearing endpoint halt for pipe 0x%x\n", pipe);
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("clearing endpoint halt for pipe 0x%x\n", pipe); */
+		usdev_info(us, "clearing endpoint halt for pipe 0x%x\n", pipe);
 		if (usb_stor_clear_halt(us, pipe) < 0)
-			return USB_STOR_XFER_ERROR;
+			return USB_STOR_XFER_FATAL;
+        usdev_warn(us, "-- stall on bulk pipe\n");
 		return USB_STOR_XFER_STALLED;
 
 	/* babble - the device tried to send more than we wanted to read */
 	case -EOVERFLOW:
-		US_DEBUGP("-- babble\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("-- babble\n"); */
+		usdev_err(us, "-- babble\n");
 		return USB_STOR_XFER_LONG;
 
 	/* the transfer was cancelled by abort, disconnect, or timeout */
 	case -ECONNRESET:
-		US_DEBUGP("-- transfer cancelled\n");
-		return USB_STOR_XFER_ERROR;
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("-- transfer cancelled\n"); */
+		usdev_err(us, "-- transfer cancelled\n");
+		return USB_STOR_XFER_FATAL;
 
 	/* short scatter-gather read transfer */
 	case -EREMOTEIO:
-		US_DEBUGP("-- short read transfer\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("-- short read transfer\n"); */
+		usdev_err(us, "-- short read transfer\n");
 		return USB_STOR_XFER_SHORT;
 
 	/* abort or disconnect in progress */
 	case -EIO:
-		US_DEBUGP("-- abort or disconnect in progress\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("-- abort or disconnect in progress\n"); */
+		usdev_err(us, "-- abort or disconnect in progress\n");
+		return USB_STOR_XFER_FATAL;
+
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+	/* command timed out */
+	case -ETIMEDOUT:
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("-- timeout\n"); */
+		usdev_err(us, "-- timeout\n");
+		return USB_STOR_XFER_TIMEOUT;
+/*------------------------------------------*/
+
+
+ /* Modified by Panasonic (SAV), 2011/2/4 */
+   /* transactions error */
+    case -EPROTO:
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("-- transaction error\n"); */
+		usdev_err(us, "-- transaction error\n");
 		return USB_STOR_XFER_ERROR;
+/*------------------------------------------*/
 
 	/* the catch-all error case */
 	default:
-		US_DEBUGP("-- unknown error\n");
-		return USB_STOR_XFER_ERROR;
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("-- unknown error\n"); */
+		usdev_err(us, "-- unknown error : %d\n", result);
+		return USB_STOR_XFER_FATAL;
 	}
 }
 
@@ -386,8 +435,9 @@ static int usb_stor_intr_transfer(struct us_data *us, void *buf,
  * termination.  Return codes are USB_STOR_XFER_xxx.  If the bulk pipe
  * stalls during the transfer, the halt is automatically cleared.
  */
-int usb_stor_bulk_transfer_buf(struct us_data *us, unsigned int pipe,
-	void *buf, unsigned int length, unsigned int *act_len)
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+int __usb_stor_bulk_transfer_buf(struct us_data *us, unsigned int pipe,
+	void *buf, unsigned int length, unsigned int *act_len, int timeout)
 {
 	int result;
 
@@ -396,7 +446,7 @@ int usb_stor_bulk_transfer_buf(struct us_data *us, unsigned int pipe,
 	/* fill and submit the URB */
 	usb_fill_bulk_urb(us->current_urb, us->pusb_dev, pipe, buf, length,
 		      usb_stor_blocking_completion, NULL);
-	result = usb_stor_msg_common(us, 0);
+	result = usb_stor_msg_common(us, timeout);
 
 	/* store the actual length of the data transferred */
 	if (act_len)
@@ -404,6 +454,13 @@ int usb_stor_bulk_transfer_buf(struct us_data *us, unsigned int pipe,
 	return interpret_urb_result(us, pipe, length, result, 
 			us->current_urb->actual_length);
 }
+
+int usb_stor_bulk_transfer_buf(struct us_data *us, unsigned int pipe,
+	void *buf, unsigned int length, unsigned int *act_len)
+{
+	return __usb_stor_bulk_transfer_buf(us, pipe, buf, length, act_len, 0);
+}
+/*------------------------------------------*/
 
 /*
  * Transfer a scatter-gather list via bulk transfer
@@ -419,7 +476,7 @@ static int usb_stor_bulk_transfer_sglist(struct us_data *us, unsigned int pipe,
 
 	/* don't submit s-g requests during abort processing */
 	if (test_bit(US_FLIDX_ABORTING, &us->dflags))
-		return USB_STOR_XFER_ERROR;
+		return USB_STOR_XFER_FATAL;
 
 	/* initialize the scatter-gather request block */
 	US_DEBUGP("%s: xfer %u bytes, %d entries\n", __func__,
@@ -428,7 +485,7 @@ static int usb_stor_bulk_transfer_sglist(struct us_data *us, unsigned int pipe,
 			sg, num_sg, length, GFP_NOIO);
 	if (result) {
 		US_DEBUGP("usb_sg_init returned %d\n", result);
-		return USB_STOR_XFER_ERROR;
+		return USB_STOR_XFER_FATAL;
 	}
 
 	/* since the block has been initialized successfully, it's now
@@ -520,6 +577,14 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 {
 	int need_auto_sense;
 	int result;
+	/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+	/* Modified by Panasonic : 2009/04/15		*/
+	/* If short data transfer completed with NO_SENSE, 
+	   needs to fake sense code itself otherwise request requeued infinitely	*/
+#if 1
+	int fake_sense = 0;
+#endif
+	/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 
 	/* send the command to the transport layer */
 	scsi_set_resid(srb, 0);
@@ -531,14 +596,32 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 	if (test_bit(US_FLIDX_TIMED_OUT, &us->dflags)) {
 		US_DEBUGP("-- command was aborted\n");
 		srb->result = DID_ABORT << 16;
-		goto Handle_Errors;
+        /* 2011/4/11,2011/4/13, modified by Panasonic (PAVBU) --> */
+/* 		goto Handle_Errors; */
+        return;
+        /* <-- 2011/4/11,2011/4/13 modified by Panasonic (PAVBU) */
 	}
+
+/* 2011/2/2, modified by Panasonic (SAV) ---> */
+	/* if there is a transport error, reset-recovery */
+	if (result == USB_STOR_TRANSPORT_RESET_RECOVERY) {
+		US_DEBUGP("-- transport indicates error, reset-recovery and don't auto-sense\n");
+		srb->result = DID_ERROR << 16;
+		goto Handle_Recovery;
+	}
+/* <--- 2011/2/2, modified by Panasonic (SAV) */
 
 	/* if there is a transport error, reset and don't auto-sense */
 	if (result == USB_STOR_TRANSPORT_ERROR) {
 		US_DEBUGP("-- transport indicates error, resetting\n");
 		srb->result = DID_ERROR << 16;
-		goto Handle_Errors;
+        /* 2011/4/11, modified by Panasonic (PAVBU) --> */
+/* 		goto Handle_Errors; */
+        if (us->fflags & US_FL_FORCE_BULK_RESET)
+            goto Handle_Recovery;
+        else
+            goto Handle_Errors;
+        /* <-- 2011/4/11, modified by Panasonic (PAVBU) */
 	}
 
 	/* if the transport provided its own sense data, don't auto-sense */
@@ -589,6 +672,15 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 	      (srb->cmnd[0] == LOG_SENSE) ||
 	      (srb->cmnd[0] == MODE_SENSE_10))) {
 		US_DEBUGP("-- unexpectedly short transfer\n");
+
+	/* P2PF TARGET DEPENDENT CODE (K277) -->	*/
+	/* Modified by Panasonic : 2009/04/15		*/
+#if 1
+		fake_sense = 1;
+#endif
+	/* <-- P2PF TARGET DEPENDENT CODE (K277) 	*/
+
+
 	}
 
 	/* Now, if we need to do the auto-sense, let's do it */
@@ -617,8 +709,24 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 		if (test_bit(US_FLIDX_TIMED_OUT, &us->dflags)) {
 			US_DEBUGP("-- auto-sense aborted\n");
 			srb->result = DID_ABORT << 16;
-			goto Handle_Errors;
+        /* 2011/4/11, modified by Panasonic (PAVBU) --> */
+/* 			goto Handle_Errors; */
+            if (us->fflags & US_FL_FORCE_BULK_RESET)
+                goto Handle_Recovery;
+            else
+                goto Handle_Errors;
+        /* <-- 2011/4/11, modified by Panasonic (PAVBU) */
 		}
+
+/* 2011/2/2, modified by Panasonic (SAV) ---> */
+        /* if there is a transport error, reset-recovery and don't auto-sense */
+        if (temp_result == USB_STOR_TRANSPORT_RESET_RECOVERY) {
+            US_DEBUGP("-- auto-sense failed, reset-recovery\n");
+            srb->result = DID_ERROR << 16;
+            goto Handle_Recovery;
+        }
+/* <--- 2011/2/2, modified by Panasonic (SAV) */
+
 		if (temp_result != USB_STOR_TRANSPORT_GOOD) {
 			US_DEBUGP("-- auto-sense failure\n");
 
@@ -627,8 +735,16 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 			 * auto-sense is perfectly valid
 			 */
 			srb->result = DID_ERROR << 16;
-			if (!(us->fflags & US_FL_SCM_MULT_TARG))
-				goto Handle_Errors;
+        /* 2011/4/11, modified by Panasonic (PAVBU) --> */
+/* 			if (!(us->fflags & US_FL_SCM_MULT_TARG)) */
+/* 				goto Handle_Errors; */
+			if (!(us->fflags & US_FL_SCM_MULT_TARG)){
+                if (us->fflags & US_FL_FORCE_BULK_RESET)
+                    goto Handle_Recovery;
+                else
+                    goto Handle_Errors;
+            }
+        /* <-- 2011/4/11, modified by Panasonic (PAVBU) */
 			return;
 		}
 
@@ -644,6 +760,28 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 			  srb->sense_buffer[12], 
 			  srb->sense_buffer[13]);
 #endif
+
+	/* P2PF TARGET DEPENDENT CODE (K277) -->	*/
+	/* Modified by Panasonic : 2009/04/15		*/
+#if 1
+		if( fake_sense && ( (srb->cmnd[0] == READ_6) || (srb->cmnd[0] == READ_10)) &&
+			( srb->sense_buffer[0] == 0x70 &&
+			( srb->sense_buffer[2] & 0xf ) == 0x00 &&
+			srb->sense_buffer[12] == 0x00 &&
+			srb->sense_buffer[13] == 0x00 ) ){
+			/* Set Un-recoverable media error		*/
+			/* Key = 0x03, ASC = 0x11, ASCQ = 0x00	*/
+			srb->sense_buffer[2] |= 0x03;
+			srb->sense_buffer[12] = 0x11;
+			US_DEBUGP("-- Fakesense code\n");
+			US_DEBUGP("-- code: 0x%x, key: 0x%x, ASC: 0x%x, ASCQ: 0x%x\n",
+				srb->sense_buffer[0],
+				srb->sense_buffer[2] & 0xf,
+				srb->sense_buffer[12],
+				srb->sense_buffer[13]);
+		}
+#endif
+	/* <-- P2PF TARGET DEPENDENT CODE (K277)	*/
 
 		/* set the result so the higher layers expect this data */
 		srb->result = SAM_STAT_CHECK_CONDITION;
@@ -668,6 +806,43 @@ void usb_stor_invoke_transport(struct scsi_cmnd *srb, struct us_data *us)
 		srb->result = (DID_ERROR << 16) | (SUGGEST_RETRY << 24);
 
 	return;
+
+/* 2011/2/2, modified by Panasonic (SAV) ---> */
+
+    /*
+     * Reset recovery proccess 
+     */
+ Handle_Recovery:
+
+	set_bit(US_FLIDX_RESETTING, &us->dflags);
+
+    US_DEBUGP("*** Reset-Recovery is perfomed.\n");
+    scsi_lock(us_to_host(us));
+    usb_stor_report_device_reset(us);
+    scsi_unlock(us_to_host(us));
+    result = us->transport_reset(us);
+    if (result<0) {
+        /* 2011/4/11, modified by Panasonic (PAVBU) --> */
+/*         US_DEBUGP("*** Reset-Recovery is failed(%d). So port-reset is perfomed\n", result); */
+/*         mutex_unlock(&us->dev_mutex); */
+/*         usb_stor_port_reset(us); */
+/*         mutex_lock(&us->dev_mutex); */
+        if (us->fflags & US_FL_FORCE_BULK_RESET)
+            usdev_warn(us, "*** Reset-Recovery is failed(%d).  port-reset is NOT perfomed\n", result);
+        else {
+            usdev_err(us, "*** Reset-Recovery is failed(%d). So port-reset is perfomed\n", result);
+            mutex_unlock(&us->dev_mutex);
+            usb_stor_port_reset(us);
+            mutex_lock(&us->dev_mutex);
+        }
+        /* <-- 2011/4/11, modified by Panasonic (PAVBU) */
+    }
+
+	clear_bit(US_FLIDX_RESETTING, &us->dflags);
+
+    return;
+
+/* <--- 2011/2/2, modified by Panasonic (SAV) */
 
 	/* Error and abort processing: try to resynchronize with the device
 	 * by issuing a port reset.  If that fails, try a class-specific
@@ -939,7 +1114,18 @@ int usb_stor_Bulk_transport(struct scsi_cmnd *srb, struct us_data *us)
 			bcb->Length);
 	result = usb_stor_bulk_transfer_buf(us, us->send_bulk_pipe,
 				bcb, cbwlen, NULL);
+/* 2011/2/4, modified by Panasonic (SAV) ---> */
+    if(result==USB_STOR_XFER_ERROR) {
+		US_DEBUGP("transaction error for sending CBW; retrying...\n");
+        result = usb_stor_bulk_transfer_buf(us, us->send_bulk_pipe,
+                                            bcb, cbwlen, NULL);
+    }
+/* ------------------------------------------*/
 	US_DEBUGP("Bulk command transfer result=%d\n", result);
+/* 2011/2/2, modified by Panasonic (SAV) ---> */
+    if (result == USB_STOR_XFER_STALLED) 
+        return USB_STOR_TRANSPORT_RESET_RECOVERY;
+/* <--- 2011/2/2, modified by Panasonic (SAV) */
 	if (result != USB_STOR_XFER_GOOD)
 		return USB_STOR_TRANSPORT_ERROR;
 
@@ -957,7 +1143,7 @@ int usb_stor_Bulk_transport(struct scsi_cmnd *srb, struct us_data *us)
 				us->recv_bulk_pipe : us->send_bulk_pipe;
 		result = usb_stor_bulk_srb(us, pipe, srb);
 		US_DEBUGP("Bulk data transfer result 0x%x\n", result);
-		if (result == USB_STOR_XFER_ERROR)
+		if (result == USB_STOR_XFER_FATAL)
 			return USB_STOR_TRANSPORT_ERROR;
 
 		/* If the device tried to send back more data than the
@@ -1000,6 +1186,10 @@ int usb_stor_Bulk_transport(struct scsi_cmnd *srb, struct us_data *us)
 
 	/* if we still have a failure at this point, we're in trouble */
 	US_DEBUGP("Bulk status result = %d\n", result);
+/* 2011/2/2, modified by Panasonic (SAV) ---> */
+    if (result == USB_STOR_XFER_STALLED) 
+        return USB_STOR_TRANSPORT_RESET_RECOVERY;
+/* <--- 2011/2/2, modified by Panasonic (SAV) */
 	if (result != USB_STOR_XFER_GOOD)
 		return USB_STOR_TRANSPORT_ERROR;
 
@@ -1011,7 +1201,7 @@ int usb_stor_Bulk_transport(struct scsi_cmnd *srb, struct us_data *us)
 	if (!(bcs->Tag == us->tag || (us->fflags & US_FL_BULK_IGNORE_TAG)) ||
 		bcs->Status > US_BULK_STAT_PHASE) {
 		US_DEBUGP("Bulk logical error\n");
-		return USB_STOR_TRANSPORT_ERROR;
+        return USB_STOR_TRANSPORT_ERROR;
 	}
 
 	/* Some broken devices report odd signatures, so we do not check them
@@ -1027,7 +1217,7 @@ int usb_stor_Bulk_transport(struct scsi_cmnd *srb, struct us_data *us)
 		US_DEBUGP("Signature mismatch: got %08X, expecting %08X\n",
 			  le32_to_cpu(bcs->Signature),
 			  le32_to_cpu(us->bcs_signature));
-		return USB_STOR_TRANSPORT_ERROR;
+        return USB_STOR_TRANSPORT_ERROR;
 	}
 
 	/* try to compute the actual residue, based on how much data
@@ -1075,7 +1265,9 @@ int usb_stor_Bulk_transport(struct scsi_cmnd *srb, struct us_data *us)
 			/* phase error -- note that a transport reset will be
 			 * invoked by the invoke_transport() function
 			 */
-			return USB_STOR_TRANSPORT_ERROR;
+            /* 2011/2/2, modified by Panasonic (SAV) */
+/* 			return USB_STOR_TRANSPORT_ERROR; */
+			return USB_STOR_TRANSPORT_RESET_RECOVERY;
 	}
 
 	/* we should never get here, but if we do, we're in trouble */
@@ -1102,7 +1294,9 @@ static int usb_stor_reset_common(struct us_data *us,
 	int result2;
 
 	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
-		US_DEBUGP("No reset during disconnect\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("No reset during disconnect\n"); */
+		usdev_err(us, "ERROR: No reset during disconnect\n");
 		return -EIO;
 	}
 
@@ -1110,33 +1304,52 @@ static int usb_stor_reset_common(struct us_data *us,
 			request, requesttype, value, index, data, size,
 			5*HZ);
 	if (result < 0) {
-		US_DEBUGP("Soft reset failed: %d\n", result);
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("Soft reset failed: %d\n", result); */
+		usdev_err(us, "ERROR: Soft reset failed: %d\n", result);
 		return result;
 	}
 
-	/* Give the device some time to recover from the reset,
-	 * but don't delay disconnect processing. */
-	wait_event_interruptible_timeout(us->delay_wait,
-			test_bit(US_FLIDX_DISCONNECTING, &us->dflags),
-			HZ*6);
+/* 2011/4/19, modified by Panasonic (PAVBU) ---> */
+
+    if (!(us->fflags & US_FL_FAST_RECOVERY)) {
+        /* Give the device some time to recover from the reset,
+         * but don't delay disconnect processing. */
+        wait_event_interruptible_timeout(us->delay_wait,
+                                         test_bit(US_FLIDX_DISCONNECTING, &us->dflags),
+                                         HZ*6);
+    }
+
+/* <--- 2011/4/19, modified by Panasonic (PAVBU) */
+
 	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
-		US_DEBUGP("Reset interrupted by disconnect\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("Reset interrupted by disconnect\n"); */
+		usdev_err(us,"ERROR: Reset interrupted by disconnect\n");
 		return -EIO;
 	}
 
-	US_DEBUGP("Soft reset: clearing bulk-in endpoint halt\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 	US_DEBUGP("Soft reset: clearing bulk-in endpoint halt\n"); */
+	usdev_info(us, "Soft reset: clearing bulk-in endpoint halt\n");
 	result = usb_stor_clear_halt(us, us->recv_bulk_pipe);
 
-	US_DEBUGP("Soft reset: clearing bulk-out endpoint halt\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 	US_DEBUGP("Soft reset: clearing bulk-out endpoint halt\n"); */
+	usdev_info(us, "Soft reset: clearing bulk-out endpoint halt\n");
 	result2 = usb_stor_clear_halt(us, us->send_bulk_pipe);
 
 	/* return a result code based on the result of the clear-halts */
 	if (result >= 0)
 		result = result2;
 	if (result < 0)
-		US_DEBUGP("Soft reset failed\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("Soft reset failed\n"); */
+		usdev_err(us,"ERROR: Soft reset failed\n");
 	else
-		US_DEBUGP("Soft reset done\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("Soft reset done\n"); */
+		usdev_info(us, "Soft reset done\n");
 	return result;
 }
 
@@ -1161,7 +1374,9 @@ int usb_stor_CB_reset(struct us_data *us)
  */
 int usb_stor_Bulk_reset(struct us_data *us)
 {
-	US_DEBUGP("%s called\n", __func__);
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 	US_DEBUGP("%s called\n", __func__); */
+    usdev_info(us, "Bulk-only Reset is issued\n");
 
 	return usb_stor_reset_common(us, US_BULK_RESET_REQUEST, 
 				 USB_TYPE_CLASS | USB_RECIP_INTERFACE,
@@ -1173,23 +1388,36 @@ int usb_stor_Bulk_reset(struct us_data *us)
  */
 int usb_stor_port_reset(struct us_data *us)
 {
-	int result, rc_lock;
+/* 2011/1/11, modified by Panasonic (SAV) */
+/* 	int result, rc_lock; */
+	int result;
 
-	result = rc_lock =
-		usb_lock_device_for_reset(us->pusb_dev, us->pusb_intf);
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+    usdev_info(us, "USB port reset is issued.\n");
+
+/* 2011/1/11, modified by Panasonic (SAV) */
+/* 	result = rc_lock = */
+/* 		usb_lock_device_for_reset(us->pusb_dev, us->pusb_intf); */
+	result = usb_lock_device_for_reset(us->pusb_dev, us->pusb_intf);
 	if (result < 0)
-		US_DEBUGP("unable to lock device for reset: %d\n", result);
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 		US_DEBUGP("unable to lock device for reset: %d\n", result); */
+		usdev_warn(us, "unable to lock device for reset: %d\n", result);
 	else {
 		/* Were we disconnected while waiting for the lock? */
 		if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
 			result = -EIO;
-			US_DEBUGP("No reset during disconnect\n");
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 			US_DEBUGP("No reset during disconnect\n"); */
+			usdev_err(us, "No reset during disconnect\n");
 		} else {
 			result = usb_reset_device(us->pusb_dev);
-			US_DEBUGP("usb_reset_device returns %d\n",
-					result);
+        /* 2011/4/11, modified by Panasonic (PAVBU) */
+/* 			US_DEBUGP("usb_reset_device returns %d\n", result); */
+			usdev_err(us, "usb_reset_device returns %d\n", result);
 		}
-		if (rc_lock)
+/* 2011/1/11, modified by Panasonic (SAV) */
+/* 		if (rc_lock) */
 			usb_unlock_device(us->pusb_dev);
 	}
 	return result;

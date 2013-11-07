@@ -7,6 +7,7 @@
  * Some of these are known to the "virtual root hub" code
  * in host controller drivers.
  */
+/* $Id: hub.h 11212 2010-12-16 06:43:21Z Noguchi Isao $ */
 
 #include <linux/list.h>
 #include <linux/workqueue.h>
@@ -28,9 +29,18 @@
 #define HUB_GET_TT_STATE	10
 #define HUB_STOP_TT		11
 
+/* 2010/9/2, added by Panasonic to support USB3.0 external HUB ---> */
+/*
+ * Hub class requests
+ * See USB 3.0 spec Table 10-6
+ */
+#define SET_HUB_DEPTH       12
+#define GET_PORT_ERR_COUNT  13
+/* <--- 2010/9/2, added by Panasonic to support USB3.0 external HUB */
+
 /*
  * Hub Class feature numbers
- * See USB 2.0 spec Table 11-17
+ * See USB 2.0 spec Table 11-17 and USB 3.0 spec Table 10-7
  */
 #define C_HUB_LOCAL_POWER	0
 #define C_HUB_OVER_CURRENT	1
@@ -47,7 +57,12 @@
 #define USB_PORT_FEAT_L1		5	/* L1 suspend */
 #define USB_PORT_FEAT_POWER		8
 #define USB_PORT_FEAT_LOWSPEED		9
+/* This value was never in Table 11-17 */
 #define USB_PORT_FEAT_HIGHSPEED		10
+/* This value is also fake */
+/* #define USB_PORT_FEAT_SUPERSPEED	11 */
+#define USB_PORT_FEAT_SUPERSPEED	13
+#define USB_PORT_FEAT_UNKNOWNSPEED	15 /* Unknown spped; not defined in spec. Added by Panasonic, 2009/4/17 */
 #define USB_PORT_FEAT_C_CONNECTION	16
 #define USB_PORT_FEAT_C_ENABLE		17
 #define USB_PORT_FEAT_C_SUSPEND		18
@@ -56,6 +71,29 @@
 #define USB_PORT_FEAT_TEST              21
 #define USB_PORT_FEAT_INDICATOR         22
 #define USB_PORT_FEAT_C_PORT_L1         23
+
+/* 2010/9/2, added by Panasonic to support USB3.0 external HUB ---> */
+/*
+ * Port feature numbers
+ * See USB 3.0 spec Table 10-7
+ */
+#define USB_SS_PORT_FEAT_CONNECTION     0
+#define USB_SS_PORT_FEAT_OVER_CURRENT	3
+#define USB_SS_PORT_FEAT_RESET          4
+#define USB_SS_PORT_FEAT_LINK_STATE     5
+#define USB_SS_PORT_FEAT_POWER          8
+#define USB_SS_PORT_FEAT_C_CONNECTION	16
+#define USB_SS_PORT_FEAT_C_OVER_CURRENT	19
+#define USB_SS_PORT_FEAT_C_RESET		20
+#define USB_SS_PORT_FEAT_U1_TIMEOUT     23
+#define USB_SS_PORT_FEAT_U2_TIMEOUT     24
+#define USB_SS_PORT_FEAT_C_LINK_STATE   25
+#define USB_SS_PORT_FEAT_C_CONFIG_ERROR 26
+#define USB_SS_PORT_FEAT_REMOTE_WAKE_MASK  27
+#define USB_SS_PORT_FEAT_BH_RESET       28
+#define USB_SS_PORT_FEAT_C_BH_RESET     29
+#define USB_SS_PORT_FEAT_FORECE_LINKPM_ACCEPT   30
+/* <--- 2010/9/2, added by Panasonic to support USB3.0 external HUB */
 
 /*
  * Hub Status and Hub Change results
@@ -80,9 +118,30 @@ struct usb_port_status {
 #define USB_PORT_STAT_POWER		0x0100
 #define USB_PORT_STAT_LOW_SPEED		0x0200
 #define USB_PORT_STAT_HIGH_SPEED        0x0400
+/* This value is also fake */
+#define USB_PORT_STAT_SUPER_SPEED   (1<<USB_PORT_FEAT_SUPERSPEED)   /* 2010/9/2, added by Panasonic to support USB3.0 external HUB */
 #define USB_PORT_STAT_TEST              0x0800
 #define USB_PORT_STAT_INDICATOR         0x1000
+/* bits 14 to 15 are reserved */
+#define USB_PORT_STAT_UNKNOWN_SPEED (1<<USB_PORT_FEAT_UNKNOWNSPEED) /* Unknown spped; not defined in spec. Added by Panasonic, 2009/4/17 */
+
+/* 2010/9/2, added by Panasonic to support USB3.0 external HUB ---> */
+/*
+ * wPortStatus bit field
+ * See USB 3.0 spec Table 10-10
+ */
+#define USB_SS_PORT_STAT_CONNECTION     (1<<0)
+#define USB_SS_PORT_STAT_ENABLE         (1<<1)
+/* bits 2 is reserved */
+#define USB_SS_PORT_STAT_OVERCURRENT    (1<<3)
+#define USB_SS_PORT_STAT_RESET          (1<<4)
+#define USB_SS_PORT_STAT_LINK_STATE(x)  (((x)&0xF)<<5)
+#define USB_SS_PORT_STAT_LINK_STATE_MASK    USB_SS_PORT_STAT_LINK_STATE(0xF)
+#define USB_SS_PORT_STAT_POWER          (1<<9)
+#define USB_SS_PORT_STAT_SPEED(x)  (((x)&0x7)<<10)
+#define USB_SS_PORT_STAT_SPEED_MASK    USB_SS_PORT_STAT_SPEED(7)
 /* bits 13 to 15 are reserved */
+/* <--- 2010/9/2, added by Panasonic to support USB3.0 external HUB */
 
 /*
  * wPortChange bit field
@@ -95,6 +154,19 @@ struct usb_port_status {
 #define USB_PORT_STAT_C_OVERCURRENT	0x0008
 #define USB_PORT_STAT_C_RESET		0x0010
 #define USB_PORT_STAT_C_L1		0x0020
+
+/* 2010/9/2, added by Panasonic to support USB3.0 external HUB ---> */
+/*
+ * wPortChange bit field
+ * See USB 3.0 spec Table 10-11
+ */
+#define USB_SS_PORT_STAT_C_CONNECTION	(1<<0)
+#define USB_SS_PORT_STAT_C_OVERCURRENT	(1<<3)
+#define USB_SS_PORT_STAT_C_RESET		(1<<4)
+#define USB_SS_PORT_STAT_C_BH_RESET		(1<<5)
+#define USB_SS_PORT_STAT_C_LINK_STATE	(1<<6)
+#define USB_SS_PORT_STAT_C_CONFIG_ERROR	(1<<7)
+/* <--- 2010/9/2, added by Panasonic to support USB3.0 external HUB */
 
 /*
  * wHubCharacteristics (masks)
@@ -144,6 +216,29 @@ struct usb_hub_descriptor {
 } __attribute__ ((packed));
 
 
+/* 2010/9/2, added by Panasonic to support USB3.0 external HUB ---> */
+/*
+ * SS Hub descriptor
+ * See USB 3.0 spec Table 10-3
+ */
+
+#define USB_DT_SS_HUB			(USB_TYPE_CLASS | 0x0A)
+#define USB_DT_SS_HUB_NONVAR_SIZE		12
+
+struct usb_ss_hub_descriptor {
+	__u8  bDescLength;
+	__u8  bDescriptorType;
+	__u8  bNbrPorts;
+	__le16 wHubCharacteristics;
+	__u8  bPwrOn2PwrGood;
+	__u8  bHubContrCurrent;
+	__u8  bHubHdrDecLat;
+	__le16  wHubDelay;
+	__u8  DeviceRemovable[2];
+} __attribute__ ((packed));
+/* <--- 2010/9/2, added by Panasonic to support USB3.0 external HUB */
+
+
 /* port indicator status selectors, tables 11-7 and 11-25 */
 #define HUB_LED_AUTO	0
 #define HUB_LED_AMBER	1
@@ -185,16 +280,18 @@ struct usb_tt {
 	/* for control/bulk error recovery (CLEAR_TT_BUFFER) */
 	spinlock_t		lock;
 	struct list_head	clear_list;	/* of usb_tt_clear */
-	struct work_struct			kevent;
+	struct work_struct	clear_work;
 };
 
 struct usb_tt_clear {
 	struct list_head	clear_list;
 	unsigned		tt;
 	u16			devinfo;
+	struct usb_hcd		*hcd;
+	struct usb_host_endpoint	*ep;
 };
 
-extern void usb_hub_tt_clear_buffer(struct usb_device *dev, int pipe);
+extern int usb_hub_clear_tt_buffer(struct urb *urb);
 extern void usb_ep0_reinit(struct usb_device *);
 
 #endif /* __LINUX_HUB_H */

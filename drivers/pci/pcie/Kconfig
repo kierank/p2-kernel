@@ -1,3 +1,5 @@
+## $Id: Kconfig 9139 2010-09-14 00:43:11Z Noguchi Isao $
+
 #
 # PCI Express Port Bus Configuration
 #
@@ -46,3 +48,15 @@ config PCIEASPM_DEBUG
 	help
 	  This enables PCI Express ASPM debug support. It will add per-device
 	  interface to control ASPM.
+
+## 2010/6/8, added by Panasonic ==>
+#
+#   Supported PCI Express for MPC837x and MPC831x
+#
+config PPC_MPC83XX_PCIE
+	bool "MPC837x and MPC831x PCI Express support"
+	depends on PPC_MPC837x || PPC_MPC831x
+	depends on PCIEPORTBUS
+	help
+	  This option enables PCI express for MPC837x and MPC831x
+## <=== 2010/6/8, added by Panasonic

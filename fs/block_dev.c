@@ -27,6 +27,10 @@
 #include <asm/uaccess.h>
 #include "internal.h"
 
+/* Added by Pansonic ----> */
+#include <linux/p2blkdev.h>
+/* <---- Added by Panasonic */
+
 struct bdev_inode {
 	struct block_device bdev;
 	struct inode vfs_inode;
@@ -38,8 +42,11 @@ static inline struct bdev_inode *BDEV_I(struct inode *inode)
 {
 	return container_of(inode, struct bdev_inode, vfs_inode);
 }
-
+#ifndef CONFIG_KGDB /* Modified by Panasonic for KGDB */
 inline struct block_device *I_BDEV(struct inode *inode)
+#else
+struct block_device *I_BDEV(struct inode *inode)
+#endif /* CONFIG_KGDB */
 {
 	return &BDEV_I(inode)->bdev;
 }
@@ -132,6 +139,15 @@ blkdev_get_block(struct inode *inode, sector_t iblock,
 	bh->b_bdev = I_BDEV(inode);
 	bh->b_blocknr = iblock;
 	set_buffer_mapped(bh);
+
+	/* Added by Panasonic --> */
+	if (blkdev_p2pf_is_dirent(inode->i_bdev, iblock * (bh->b_size>>9))) {
+	  set_bit(BH_Dirent, &(bh->b_state));
+	} else {
+	  clear_bit(BH_Dirent, &(bh->b_state));
+	}
+	/* <-- Added by Panasonic */
+
 	return 0;
 }
 
@@ -285,6 +301,10 @@ static void init_once(void *foo)
 	INIT_LIST_HEAD(&bdev->bd_holder_list);
 #endif
 	inode_init_once(&ei->vfs_inode);
+
+/* Added by Panasonic --> */
+	INIT_LIST_HEAD(&bdev->bd_dlist);
+/* <-- Added by Panasonic */
 }
 
 static inline void __bd_forget(struct inode *inode)
@@ -343,6 +363,10 @@ void __init bdev_cache_init(void)
 	if (IS_ERR(bd_mnt))
 		panic("Cannot create bdev pseudo-fs");
 	blockdev_superblock = bd_mnt->mnt_sb;	/* For writeback */
+
+#if defined(CONFIG_RTCTRL) /* Added by Panasonic for RT Control ----> */
+	init_rton_info();
+#endif /* CONFIG_RTCTRL */ /* <---- Added by Panasonic for RT Control */
 }
 
 /*
@@ -918,6 +942,32 @@ static int __blkdev_get(struct block_device *bdev, mode_t mode, unsigned flags,
 			int for_part);
 static int __blkdev_put(struct block_device *bdev, int for_part);
 
+/* Added by Panasonic for open_request flag & DWM ----> */
+void blkdev_mount_fs(struct block_device *bdev)
+{
+	if (bdev && bdev->bd_disk) {
+		struct gendisk *disk = bdev->bd_disk;
+		struct block_device_operations *ops = disk->fops;
+		
+		if (ops->mount_fs) {
+			ops->mount_fs(bdev->bd_inode);
+		}
+	}
+}
+
+void blkdev_umount_fs(struct block_device *bdev)
+{
+	if (bdev && bdev->bd_disk) {
+		struct gendisk *disk = bdev->bd_disk;
+		struct block_device_operations *ops = disk->fops;
+		
+		if (ops->umount_fs) {
+			ops->umount_fs(bdev->bd_inode);
+		}
+	}
+}
+/* <---- Added by Panasonic for open_request flag & DWM */
+
 /*
  * bd_mutex locking:
  *
@@ -1021,6 +1071,7 @@ static int do_open(struct block_device *bdev, struct file *file, int for_part)
 	return 0;
 
 out_first:
+	blkdev_mount_fs(bdev); /* Added by Panasonic for open_request flag */
 	bdev->bd_disk = NULL;
 	bdev->bd_inode->i_data.backing_dev_info = &default_backing_dev_info;
 	if (bdev != bdev->bd_contains)
@@ -1152,6 +1203,45 @@ static int blkdev_close(struct inode * inode, struct file * filp)
 
 static long block_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
+/* Added by Panasonic --> */
+  switch (cmd) {
+  case BLK_P2PF_ADD_DIRENT_LIST:
+    {
+      struct blkdev_list_arg __entry;
+      if (copy_from_user((void *)&__entry,
+			 (void *)arg,
+			 sizeof(struct blkdev_list_arg))) return (-EFAULT);
+      blkdev_p2pf_add_dirent_list(file->f_mapping->host->i_bdev, &__entry);
+      return 0;
+    }
+
+  case BLK_P2PF_DEL_DIRENT_LIST:
+    {
+      struct blkdev_list_arg __entry;
+      if (copy_from_user((void *)&__entry,
+			 (void *)arg,
+			 sizeof(struct blkdev_list_arg))) return (-EFAULT);
+      blkdev_p2pf_del_dirent_list(file->f_mapping->host->i_bdev, &__entry);
+      return 0;
+    }
+
+  case BLK_P2PF_CLR_DIRENT_LIST:
+    {
+      blkdev_p2pf_clr_dirent_list(file->f_mapping->host->i_bdev);
+      return 0;
+    }
+
+    /* For DWM ----> */
+  case BLKMNTFS:
+    blkdev_mount_fs(I_BDEV(file->f_mapping->host));
+    return 0;
+  case BLKUMNTFS:
+    blkdev_umount_fs(I_BDEV(file->f_mapping->host));
+    return 0;
+    /* <---- For DWM */
+  }
+/* <-- Added by Panasonic */
+
 	return blkdev_ioctl(file->f_mapping->host, file, cmd, arg);
 }
 

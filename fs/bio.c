@@ -200,7 +200,11 @@ void bio_put(struct bio *bio)
 	}
 }
 
+#ifndef CONFIG_KGDB /* Modified by Panasonic for KGDB */
 inline int bio_phys_segments(struct request_queue *q, struct bio *bio)
+#else
+int bio_phys_segments(struct request_queue *q, struct bio *bio)
+#endif /* CONFIG_KGDB */
 {
 	if (unlikely(!bio_flagged(bio, BIO_SEG_VALID)))
 		blk_recount_segments(q, bio);
@@ -208,7 +212,11 @@ inline int bio_phys_segments(struct request_queue *q, struct bio *bio)
 	return bio->bi_phys_segments;
 }
 
+#ifndef CONFIG_KGDB /* Modified by Panasonic for KGDB */
 inline int bio_hw_segments(struct request_queue *q, struct bio *bio)
+#else
+int bio_hw_segments(struct request_queue *q, struct bio *bio)
+#endif /* CONFIG_KGDB */
 {
 	if (unlikely(!bio_flagged(bio, BIO_SEG_VALID)))
 		blk_recount_segments(q, bio);

@@ -105,6 +105,8 @@ struct __fat_dirent {
 #define FAT_IOCTL_GET_ATTRIBUTES	_IOR('r', 0x10, __u32)
 #define FAT_IOCTL_SET_ATTRIBUTES	_IOW('r', 0x11, __u32)
 
+#define FAT_IOCTL_SET_PREV_FREE		_IOW('r', 0x12, unsigned int) 
+
 struct fat_boot_sector {
 	__u8	ignored[3];	/* Boot strap short or near jump */
 	__u8	system_id[8];	/* Name - can be used to special case
@@ -408,6 +410,7 @@ extern int fat_alloc_clusters(struct inode *inode, int *cluster,
 			      int nr_cluster);
 extern int fat_free_clusters(struct inode *inode, int cluster);
 extern int fat_count_free_clusters(struct super_block *sb);
+extern int fat_set_prev_free(struct super_block *sb, unsigned int new_prev_free);
 
 /* fat/file.c */
 extern int fat_generic_ioctl(struct inode *inode, struct file *filp,

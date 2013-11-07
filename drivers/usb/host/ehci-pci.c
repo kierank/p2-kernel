@@ -17,6 +17,7 @@
  * along with this program; if not, write to the Free Software Foundation,
  * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* $Id: ehci-pci.c 9139 2010-09-14 00:43:11Z Noguchi Isao $ */
 
 #ifndef CONFIG_PCI
 #error "This file is PCI bus glue.  CONFIG_PCI must be defined."
@@ -66,10 +67,18 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
 	struct pci_dev		*pdev = to_pci_dev(hcd->self.controller);
+	struct pci_dev		*p_smbus;
+	u8			rev;
 	u32			temp;
 	int			retval;
 
 	switch (pdev->vendor) {
+	case PCI_VENDOR_ID_INTEL:
+		if (pdev->device == 0x27cc) {
+			ehci->broken_periodic = 1;
+			ehci_info(ehci, "using broken periodic workaround\n");
+		}
+		break;
 	case PCI_VENDOR_ID_TOSHIBA_2:
 		/* celleb's companion chip */
 		if (pdev->device == 0x01b5) {
@@ -81,6 +90,112 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 #endif
 		}
 		break;
+
+        /***************************************************
+         * 2010/8/18, added by Panasonic ===>
+         ***************************************************/
+    case PCI_VENDOR_ID_NEC:
+
+#ifdef CONFIG_USB_EHCI_PCI_NEC
+        /* USB2.0 controller */
+        if(pdev->device==0x00E0) {
+            u32 ext1, ext2;
+
+            /* Read from EXT1,EXT2 configration reg. */
+            pci_read_config_dword (pdev, 0xE0, &ext1);
+            pci_read_config_dword (pdev, 0xE4, &ext2);
+
+#if defined(CONFIG_USB_EHCI_UPD720101)
+            //------------------------------------------------------------------------------
+            //  For NEC uPD710101 USB host controller
+            //------------------------------------------------------------------------------
+
+            /* Output information */
+            ehci_info(ehci, "*** NEC uPD710101 USB host controller\n");
+
+            /* Port No */
+            {
+                int portno = 5;
+#ifdef CONFIG_USB_EHCI_UPD72010X_PORT_NO
+                portno = CONFIG_USB_EHCI_UPD72010X_PORT_NO;
+                if ((portno < 2) || (portno > 5)) {
+                    ehci_err(ehci,"invalid port number is %d\n", portno);
+                    retval = -EINVAL;
+                    goto done;
+                }
+#endif  /* CONFIG_USB_EHCI_UPD72010X_PORT_NO */
+                ehci_info(ehci,"Port number is %d\n", portno);
+                ext1 &= ~0x00000007;
+                ext1 |= portno & 0x00000007;
+            }
+
+            /* Disables PPC setting */
+#ifdef CONFIG_USB_EHCI_UPD72010X_PPCOFF
+            ext1 &= ~(1<<21); /* HC does't have the port power control switch. */
+            ehci_info(ehci,"PPC is NOT set\n");
+#endif  /* CONFIG_USB_EHCI_UPD72010X_PPCOFF */
+
+        /* Clock Select */
+#ifdef CONFIG_USB_EHCI_UPD72010X_OSC_48MHZ
+            ext2 |= 1<<5;       /* System clock is 48MHz Oscillator */
+            ehci_info("System clock is 48MHz Oscillator\n");
+#endif  /* CONFIG_USB_EHCI_UPD72010X_OSC_48MHZ */
+
+
+#elif defined(CONFIG_USB_EHCI_UPD720102)
+            //------------------------------------------------------------------------------
+            //  For NEC uPD710102 USB host controller
+            //------------------------------------------------------------------------------
+
+            /* Output information */
+			ehci_info(ehci, "*** NEC uPD710102 USB host controller\n");
+
+            /* Port No */
+            {
+                int portno = 3;
+#ifdef CONFIG_USB_EHCI_UPD72010X_PORT_NO
+                portno = CONFIG_USB_EHCI_UPD72010X_PORT_NO;
+                if ((portno < 1) || (portno > 3)) {
+                    ehci_err(ehci,"invalid port number is %d\n", portno);
+                    retval = -EINVAL;
+                    goto done;
+                }
+#endif  /* CONFIG_USB_EHCI_UPD72010X_PORT_NO */
+                ehci_info(ehci,"Port number is %d\n", portno);
+                ext1 &= ~0x00000003;
+                ext1 |= portno & 0x00000003;
+            }
+
+            /* Disables PPC setting */
+#ifdef CONFIG_USB_EHCI_UPD72010X_PPCOFF
+            ext1 &= ~(1<<2); /* HC does't have the port power control switch. */
+            ehci_info(ehci,"PPC is NOT set\n");
+#endif  /* CONFIG_USB_EHCI_UPD72010X_PPCOFF */
+
+        /* Disable Hyper-Speed mode (when HSMODE pin is LOW) */
+#ifdef CONFIG_USB_EHCI_UPD72010X_DISABLE_HSMODE
+            ext1 &= ~(1<<13);                        /* #1 */
+            ext1 &= ~(0x1F<<19); ext1 |= (0x10<<19); /* #2 */
+            ext2 &= ~(1<<1);                         /* #3 */
+            ehci_info(ehci,"Hyper-Speed Mode is disable\n");
+#endif  /* CONFIG_USB_EHCI_UPD72010X_DISABLE_HSMODE */
+
+#endif  /* CONFIG_USB_EHCI_UPD72010X */
+
+            /* Write to EXT1,EXT2 configration reg. */
+            pci_write_config_dword (pdev, 0xE0, ext1);
+            pci_write_config_dword (pdev, 0xE4, ext2);
+            ehci_info(ehci,"EXT1 = 0x%08X\n",ext1);
+            ehci_info(ehci,"EXT2 = 0x%08X\n",ext2);
+
+        }
+#endif  /* CONFIG_USB_EHCI_PCI_NEC */
+
+        break;
+        /***************************************************
+         * <==== 2010/8/18, added by Panasonic
+         ***************************************************/
+
 	}
 
 	ehci->caps = hcd->regs;
@@ -106,7 +221,7 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 		case 0x00d8:	/* CK8 */
 		case 0x00e8:	/* CK8S */
 			if (pci_set_consistent_dma_mask(pdev,
-						DMA_31BIT_MASK) < 0)
+						DMA_BIT_MASK(31)) < 0)
 				ehci_warn(ehci, "can't enable NVidia "
 					"workaround for >2GB RAM\n");
 			break;
@@ -166,6 +281,28 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 			pci_write_config_byte(pdev, 0x4b, tmp | 0x20);
 		}
 		break;
+	case PCI_VENDOR_ID_ATI:
+		/* SB600 and old version of SB700 have a bug in EHCI controller,
+		 * which causes usb devices lose response in some cases.
+		 */
+		if ((pdev->device == 0x4386) || (pdev->device == 0x4396)) {
+			p_smbus = pci_get_device(PCI_VENDOR_ID_ATI,
+						 PCI_DEVICE_ID_ATI_SBX00_SMBUS,
+						 NULL);
+			if (!p_smbus)
+				break;
+			rev = p_smbus->revision;
+			if ((pdev->device == 0x4386) || (rev == 0x3a)
+			    || (rev == 0x3b)) {
+				u8 tmp;
+				ehci_info(ehci, "applying AMD SB600/SB700 USB "
+					"freeze workaround\n");
+				pci_read_config_byte(pdev, 0x53, &tmp);
+				pci_write_config_byte(pdev, 0x53, tmp | (1<<3));
+			}
+			pci_dev_put(p_smbus);
+		}
+		break;
 	}
 
 	ehci_reset(ehci);
@@ -195,15 +332,19 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 	/* Serial Bus Release Number is at PCI 0x60 offset */
 	pci_read_config_byte(pdev, 0x60, &ehci->sbrn);
 
-	/* Workaround current PCI init glitch:  wakeup bits aren't
-	 * being set from PCI PM capability.
+	/* Keep this around for a while just in case some EHCI
+	 * implementation uses legacy PCI PM support.  This test
+	 * can be removed on 17 Dec 2009 if the dev_warn() hasn't
+	 * been triggered by then.
 	 */
 	if (!device_can_wakeup(&pdev->dev)) {
 		u16	port_wake;
 
 		pci_read_config_word(pdev, 0x62, &port_wake);
-		if (port_wake & 0x0001)
-			device_init_wakeup(&pdev->dev, 1);
+		if (port_wake & 0x0001) {
+			dev_warn(&pdev->dev, "Enabling legacy PCI PM\n");
+			device_set_wakeup_capable(&pdev->dev, 1);
+		}
 	}
 
 #ifdef	CONFIG_USB_SUSPEND
@@ -240,7 +381,7 @@ done:
  * Also they depend on separate root hub suspend/resume.
  */
 
-static int ehci_pci_suspend(struct usb_hcd *hcd, pm_message_t message)
+static int ehci_pci_suspend(struct usb_hcd *hcd)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
 	unsigned long		flags;
@@ -265,12 +406,6 @@ static int ehci_pci_suspend(struct usb_hcd *hcd, pm_message_t message)
 	ehci_writel(ehci, 0, &ehci->regs->intr_enable);
 	(void)ehci_readl(ehci, &ehci->regs->intr_enable);
 
-	/* make sure snapshot being resumed re-enumerates everything */
-	if (message.event == PM_EVENT_PRETHAW) {
-		ehci_halt(ehci);
-		ehci_reset(ehci);
-	}
-
 	clear_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
  bail:
 	spin_unlock_irqrestore (&ehci->lock, flags);
@@ -281,7 +416,7 @@ static int ehci_pci_suspend(struct usb_hcd *hcd, pm_message_t message)
 	return rc;
 }
 
-static int ehci_pci_resume(struct usb_hcd *hcd)
+static int ehci_pci_resume(struct usb_hcd *hcd, bool hibernated)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
 	struct pci_dev		*pdev = to_pci_dev(hcd->self.controller);
@@ -294,10 +429,12 @@ static int ehci_pci_resume(struct usb_hcd *hcd)
 	/* Mark hardware accessible again as we are out of D3 state by now */
 	set_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
 
-	/* If CF is still set, we maintained PCI Vaux power.
+	/* If CF is still set and we aren't resuming from hibernation
+	 * then we maintained PCI Vaux power.
 	 * Just undo the effect of ehci_pci_suspend().
 	 */
-	if (ehci_readl(ehci, &ehci->regs->configured_flag) == FLAG_CF) {
+	if (ehci_readl(ehci, &ehci->regs->configured_flag) == FLAG_CF &&
+				!hibernated) {
 		int	mask = INTR_MASK;
 
 		if (!hcd->self.root_hub->do_remote_wakeup)
@@ -307,7 +444,6 @@ static int ehci_pci_resume(struct usb_hcd *hcd)
 		return 0;
 	}
 
-	ehci_dbg(ehci, "lost power, restarting\n");
 	usb_root_hub_lost_power(hcd->self.root_hub);
 
 	/* Else reset, to cope with power loss or flush-to-storage
@@ -365,6 +501,7 @@ static const struct hc_driver ehci_pci_hc_driver = {
 	.urb_enqueue =		ehci_urb_enqueue,
 	.urb_dequeue =		ehci_urb_dequeue,
 	.endpoint_disable =	ehci_endpoint_disable,
+	.endpoint_reset =	ehci_endpoint_reset,
 
 	/*
 	 * scheduling support
@@ -380,6 +517,8 @@ static const struct hc_driver ehci_pci_hc_driver = {
 	.bus_resume =		ehci_bus_resume,
 	.relinquish_port =	ehci_relinquish_port,
 	.port_handed_over =	ehci_port_handed_over,
+
+	.clear_tt_buffer_complete	= ehci_clear_tt_buffer_complete,
 };
 
 /*-------------------------------------------------------------------------*/
@@ -401,10 +540,11 @@ static struct pci_driver ehci_pci_driver = {
 
 	.probe =	usb_hcd_pci_probe,
 	.remove =	usb_hcd_pci_remove,
-
-#ifdef	CONFIG_PM
-	.suspend =	usb_hcd_pci_suspend,
-	.resume =	usb_hcd_pci_resume,
-#endif
 	.shutdown = 	usb_hcd_pci_shutdown,
+
+#ifdef CONFIG_PM_SLEEP
+	.driver =	{
+		.pm =	&usb_hcd_pci_pm_ops
+	},
+#endif
 };

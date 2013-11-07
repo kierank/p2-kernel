@@ -1,0 +1,63 @@
+# P2PF GPIO driver configuration
+## $Id: Kconfig 17953 2011-12-13 04:25:46Z Yoshioka Masaki $
+
+menuconfig P2GPIODRV
+	tristate "P2PF GPIO driver"
+    depends on P2IOPORTDRV=n
+    default n
+	select GENERIC_GPIO
+	select ARCH_REQUIRE_GPIOLIB
+
+if P2GPIODRV
+
+choice
+	prompt "Board type"
+	depends on P2GPIODRV
+    default P2GPIO_UNKNOWN
+
+config P2GPIO_UNKNOWN
+    bool "UNKNOWN"
+
+config P2GPIO_K283
+	bool "K283(AG-HPX250)"
+	select PPC_83xx_GPIO
+	select CODECFPGA_GPIO
+
+config P2GPIO_K298
+	bool "K298(AJ-MSU10)"
+	select PPC_83xx_GPIO
+	select CODECFPGA_GPIO
+
+config P2GPIO_K302
+	bool "K302(AG-HPD24)"
+	select PPC_83xx_GPIO
+
+config P2GPIO_K301
+	bool "K301(AG-3DP1)"
+	select PPC_83xx_GPIO
+
+config P2GPIO_K318
+	bool "K318(AG-HPX600)"
+	select PPC_83xx_GPIO
+	select CODECFPGA_GPIO
+
+
+endchoice
+
+
+config P2GPIO_FIXED_DEVNUM
+    boolean "Enabled to fixed major number"
+    default n
+
+config P2GPIO_FIXED_MAJOR
+    int "Major number"
+    depends on P2GPIO_FIXED_DEVNUM
+    default 245
+
+config P2GPIO_FIXED_MINOR
+    int "Minor number"
+    depends on P2GPIO_FIXED_DEVNUM
+    default 0
+
+
+endif # P2GPIODRV

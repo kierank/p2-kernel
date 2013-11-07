@@ -1,9 +1,16 @@
 #
 # USB peripheral controller drivers
 #
+## $Id: Makefile 21639 2013-04-09 00:15:24Z Yasuyuki Matsumoto $
+
 ifeq ($(CONFIG_USB_GADGET_DEBUG),y)
 	EXTRA_CFLAGS		+= -DDEBUG
 endif
+
+
+## 2011/6/8, added by Pnasonic (PAVBU) --->
+
+ifneq ($(CONFIG_USB_GADGET_KOBJECT),y)
 
 obj-$(CONFIG_USB_DUMMY_HCD)	+= dummy_hcd.o
 obj-$(CONFIG_USB_NET2280)	+= net2280.o
@@ -17,7 +24,36 @@ obj-$(CONFIG_USB_S3C2410)	+= s3c2410_udc.o
 obj-$(CONFIG_USB_AT91)		+= at91_udc.o
 obj-$(CONFIG_USB_ATMEL_USBA)	+= atmel_usba_udc.o
 obj-$(CONFIG_USB_FSL_USB2)	+= fsl_usb2_udc.o
+obj-$(CONFIG_USB_FSL_USB2_3D)	+= fsl_usb2_udc_3d.o
 obj-$(CONFIG_USB_M66592)	+= m66592-udc.o
+
+else
+
+obj-$(CONFIG_USB_GADGET) += gadget_udc.o
+
+gadget_udc-obj-$(CONFIG_USB_DUMMY_HCD)	+= dummy_hcd.o
+gadget_udc-obj-$(CONFIG_USB_NET2280)	+= net2280.o
+gadget_udc-obj-$(CONFIG_USB_AMD5536UDC)	+= amd5536udc.o
+gadget_udc-obj-$(CONFIG_USB_PXA25X)	+= pxa25x_udc.o
+gadget_udc-obj-$(CONFIG_USB_PXA27X)	+= pxa27x_udc.o
+gadget_udc-obj-$(CONFIG_USB_GOKU)		+= goku_udc.o
+gadget_udc-obj-$(CONFIG_USB_OMAP)		+= omap_udc.o
+gadget_udc-obj-$(CONFIG_USB_LH7A40X)	+= lh7a40x_udc.o
+gadget_udc-obj-$(CONFIG_USB_S3C2410)	+= s3c2410_udc.o
+gadget_udc-obj-$(CONFIG_USB_AT91)		+= at91_udc.o
+gadget_udc-obj-$(CONFIG_USB_ATMEL_USBA)	+= atmel_usba_udc.o
+gadget_udc-obj-$(CONFIG_USB_FSL_USB2)	+= fsl_usb2_udc.o
+gadget_udc-obj-$(CONFIG_USB_M66592)	+= m66592-udc.o
+
+gadget_udc-objs := $(gadget_udc-obj-$(CONFIG_USB_GADGET))
+ifeq ($(CONFIG_USB_GADGET_UDCDEV),y)
+gadget_udc-objs += udcdev.o
+endif
+
+endif
+
+## <--- 2011/6/8, added by Pnasonic (PAVBU)
+
 
 #
 # USB gadget drivers
@@ -35,6 +71,9 @@ g_printer-objs			:= printer.o usbstring.o config.o \
 					epautoconf.o
 g_cdc-objs			:= cdc2.o u_ether.o f_ecm.o \
 					u_serial.o f_acm.o $(C_UTILS)
+# [SBG-SAV] Revised by Panasonic 2008-APR-01, for "ua" application
+g_ms-objs           := p2_mass_storage.o usbstring.o config.o epautoconf.o
+g_ms_3d-objs        := p2_mass_storage_3d.o usbstring.o config.o epautoconf.o
 
 ifeq ($(CONFIG_USB_ETH_RNDIS),y)
 	g_ether-objs		+= f_rndis.o rndis.o
@@ -48,4 +87,6 @@ obj-$(CONFIG_USB_G_SERIAL)	+= g_serial.o
 obj-$(CONFIG_USB_G_PRINTER)	+= g_printer.o
 obj-$(CONFIG_USB_MIDI_GADGET)	+= g_midi.o
 obj-$(CONFIG_USB_CDC_COMPOSITE) += g_cdc.o
-
+# [SBG-SAV] Revised by Panasonic 2008-APR-01, for "ua" application
+obj-$(CONFIG_USB_P2_MASS_STORAGE)  += g_ms.o
+obj-$(CONFIG_USB_P2_MASS_STORAGE_3D)  += g_ms_3d.o

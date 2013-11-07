@@ -5,6 +5,7 @@
  *
  * Created to pull SCSI mid layer sysfs routines into one file.
  */
+/* $Id */
 
 #include <linux/module.h>
 #include <linux/init.h>

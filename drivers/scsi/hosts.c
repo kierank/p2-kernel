@@ -20,6 +20,7 @@
  *  Restructured scsi_host lists and associated functions.
  *  September 04, 2002 Mike Anderson (andmike@us.ibm.com)
  */
+/* $Id: hosts.c 12081 2011-01-31 06:38:59Z Noguchi Isao $ */
 
 #include <linux/module.h>
 #include <linux/blkdev.h>
@@ -349,7 +350,12 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	 * commands, but individual low-level drivers need to certify that
 	 * they actually do something sensible with such commands.
 	 */
+	/* Modified by Panasonic (SAV), 2008-jul-24 */
+#ifdef CONFIG_P2PF_SGIO_CDB16
+	shost->max_cmd_len = 16;	/* Modified suppoting 16bytes CDB for SG_IO */
+#else	
 	shost->max_cmd_len = 12;
+#endif	/* P2PF_SGIO_CDB16	*/
 	shost->hostt = sht;
 	shost->this_id = sht->this_id;
 	shost->can_queue = sht->can_queue;

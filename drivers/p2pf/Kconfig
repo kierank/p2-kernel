@@ -1,0 +1,315 @@
+# drivers/p2pf/Kconfig
+# $Id: Kconfig 14403 2011-05-18 02:58:59Z Noguchi Isao $
+
+menu "Panasonic P2PF Proprientary Modules"
+
+config P2PF
+	bool "P2PF platform"
+	default y
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+
+	  If unsure, say Y.
+
+if P2PF
+
+source "drivers/p2pf/p2pfinfo/Kconfig"
+source "drivers/p2pf/dm/Kconfig"
+source "drivers/p2pf/rtctrl/Kconfig"
+source "drivers/p2pf/zcom/Kconfig"
+source "drivers/p2pf/buffer/Kconfig"
+source "drivers/p2pf/p2ioport/Kconfig"
+source "drivers/p2pf/proxy/Kconfig"
+
+if PPC_83xx
+source "drivers/p2pf/mpc83xxdmac/Kconfig"
+endif
+
+source "drivers/p2pf/heartbeat/Kconfig"
+source "drivers/p2pf/zion/Kconfig"
+
+
+#
+# Optional initialization for Ricoh bridges
+#
+menuconfig P2PF_RICOH_OPTION
+	bool "Ricoh bridge optional initialization"
+    default n
+    ---help---
+        this option enables the optional initialization for Ricoh bridges.
+
+		If unsure, say "N".
+
+if P2PF_RICOH_OPTION
+
+choice
+    prompt "Select Ricoh bridge device"
+    depends on P2PF_RICOH_OPTION
+    ---help---
+        this option enables to select RICHO bridge.
+
+config P2PF_RICOH_UNKNOWN
+    bool "UNKNOWN"
+    depends on P2PF_RICOH_OPTION
+
+config P2PF_RICOH_R5C812
+    bool "R5C512"
+    depends on P2PF_RICOH_OPTION
+
+config P2PF_RICOH_R5C847
+    bool "R5C547"
+    depends on P2PF_RICOH_OPTION
+
+endchoice    
+
+## function disable forcely
+
+config P2PF_RICOH_FUNC_DISABLE
+    bool "Function Disable"
+    depends on !P2PF_RICOH_UNKNOWN
+    default n
+    ---help---
+        This option is used to disables each functions forcely.
+
+		If unsure, say "N".
+
+if P2PF_RICOH_FUNC_DISABLE
+
+config P2PF_RICOH_SLOTB_DISABLE
+    bool "Disables PC Card slotB i/f forcely"
+    depends on P2PF_RICOH_R5C812
+    default n
+    ---help---
+        This option disables PC Card slotB i/f forcely.
+
+config P2PF_RICOH_SD_DISABLE
+    bool "Disables SD Card i/f forcely"
+    depends on P2PF_RICOH_R5C812 || P2PF_RICOH_R5C847
+    default n
+    ---help---
+        This option disables SD Card i/f forcely.
+
+config P2PF_RICOH_MS_DISABLE
+    bool "Disables Memory Stick Card i/f forcely"
+    depends on P2PF_RICOH_R5C812 || P2PF_RICOH_R5C847
+    default n
+    ---help---
+        This option disables Memory Stick Card i/f forcely.
+
+config P2PF_RICOH_MMC_DISABLE
+    bool "Disables MMC i/f forcely"
+    depends on P2PF_RICOH_R5C847
+    default n
+    ---help---
+        This option disables MMC i/f forcely.
+
+config P2PF_RICOH_XD_DISABLE
+    bool "Disables xD Picture Card i/f forcely"
+    depends on P2PF_RICOH_R5C847
+    default n
+    ---help---
+        This option disables xD Picture Card i/f forcely.
+
+config P2PF_RICOH_1394_DISABLE
+    bool "Disables 1394 i/f forcely"
+    depends on P2PF_RICOH_R5C847
+    default n
+    ---help---
+        This option disables 1394 i/f forcely.
+
+config P2PF_RICOH_EXPRESS_DISABLE
+    bool "Disables Express Card i/f forcely"
+    depends on P2PF_RICOH_R5C812
+    default n
+    ---help---
+        This option disables Express Card i/f forcely.
+
+config P2PF_RICOH_PC_DETECT_DISABLE
+    bool "Disables PC Card Detection forcely"
+    depends on P2PF_RICOH_R5C847
+    default n
+    ---help---
+        This option disables PC Card Detection forcely.
+
+config P2PF_RICOH_EXPRESS_DETECT_DISABLE
+    bool "Disables Express Card Detection forcely"
+    depends on P2PF_RICOH_R5C847
+    default n
+    ---help---
+        This option disables  Express Card Detection forcely.
+
+endif # P2PF_RICOH_FUNC_DISABLE
+
+endif # P2PF_RICOH_OPTION
+
+#-------------------------------------------------------------------------------
+
+
+#
+# SCSI extention for p2pf
+#
+menuconfig P2PF_SCSI
+    bool "SCSI extention for p2pf"
+	depends on SCSI
+    default n
+
+if P2PF_SCSI
+
+# Extendig maximum number of the SCSI disk partition
+config	P2PF_SCSI_DISK_PAT_EX
+	bool "Extend maximum number of the disk partition (16-->32)"
+	default n
+	help
+		This option extending maximum number of the SCSI disk partition
+		to 32 from 16.
+
+# Enabling 16bytes CDB with SG_IO
+config  P2PF_SGIO_CDB16
+	bool "Enabling 16bytes CDB with SG_IO"
+	default n
+	help
+		This option enabling 16bytes CDB with SG_IO.
+
+# Supporting SCSI Disk (USB/SATA)  hot-plug detection, disk maintenance
+# functionalities, and data transfer beteen buffer and device.
+# Modified 2008-sep-24:
+config	P2PF_SCSI_DISK_FUNC
+	bool "Functionality extentions for P2PF (SCSI Disk driver)"
+	default n
+	help
+		Select this option enabling SCSI Disk (USB/SATA) hot-plug insertion
+		and removal detection and other functionalities for user space
+		applications.
+
+		If unsure, say "N".
+
+## We support two method of detecting a disk hotplug
+##  *Use SCSI disk driver extention
+##  *Use "sysfs" extention
+#choice
+#	bool "Select method of detecting hot-plug"
+#	depends on P2PF_SCSI_DISK_FUNC
+#	default P2PF_HOTPLUG_METH_SD
+#	help
+#		We support two method of detecting a disk hotplug, then
+#		select one of two.
+#
+#config	P2PF_HOTPLUG_METH_SD
+#	boolean "Use SCSI driver extention (default)"
+#	help
+#		No help available.
+#
+#config	P2PF_HOTPLUG_METH_SYSFS
+#	boolean "Use sysfs extention (EXPERIMENTAL)"
+#	help
+#		No help available.
+#
+#endchoice
+
+# detecting SCSI block device error
+config P2PF_SCSI_DISK_BLK_ERROR
+    bool "Enable detecting SCSI block device error"
+    default n
+    depends on P2PF_SCSI_DISK_FUNC
+    help
+	  Select this option if you would like to detect SCSI block device error.
+
+	  If unsure, say Y.
+        
+# /proc file to debug SCSI DISK
+config P2PF_SCSI_DISK_PROC_FS
+    bool "Enable /proc file to debug SCSI DISK"
+    default n
+    depends on PROC_FS && P2PF_SCSI_DISK_FUNC
+    help
+	  Select this option if you need proc filesystem for scsi disk.
+
+	  If unsure, say Y.
+
+# ## 2010/6/3, Added by Panasonic ==>
+#
+# # USB port test
+# config P2PF_SCSI_DISK_USB_PORT_TEST
+#    bool "Enable USB port test"
+#    default n
+#    depends on P2PF_SCSI_DISK_FUNC
+#    help
+#      This option enables USB port test function.
+#
+#	  If unsure, say Y.
+#
+# ## <== 2010/6/3, Added by Panasonic
+
+endif # P2PF_SCSI
+
+#-------------------------------------------------------------------------------
+
+
+
+# CODEC_VGA driver
+source "drivers/p2pf/codec_vga/Kconfig"
+
+# P2GPIO
+source "drivers/p2pf/p2gpio/Kconfig"
+
+# power management depends on p2pf machines
+source "drivers/p2pf/pm/Kconfig"
+
+# P2MSU devices
+source "drivers/p2pf/msudev/Kconfig"
+
+## 2010/7/30, adeed by Panasonic
+# verifier
+source "drivers/p2pf/verify/Kconfig"
+
+# CONFIG_DTS_FLAGS
+config DTS_FLAGS
+    bool "Change DTS compile flags ?"
+    default n
+	---help---
+    Enable this option if you want to change compile option for DTS.
+    If this option is disable, flag is "-p 1024".
+    See "arch/powerpc/boot/Makefile"
+
+config DTS_FLAGS_STRING
+    string "DTS compile flags"
+    depends on DTS_FLAGS
+
+endif # P2PF
+
+endmenu
+
+
+#-----------------------------------------------------------------------
+# Fast bootup menu
+#
+
+menu "Fast bootup setup"
+
+config RET_LOGLEVEL
+	bool "Return console loglevel to default"
+	default n
+	help
+	  Select this option if you need to print kernel messages after bootup.
+
+	  If unsure, say N.
+
+
+config DISABLE_INIT_MESSAGE
+	bool "Disable init messages"
+	default n
+	help
+	  Select this option if you need to print no arch init messages for fast bootup
+
+	  If unsure, say N.
+
+config DISABLE_SDPROBE_MESSAGE
+	bool "Disable SCSI-Disk probe messages"
+	default n
+	help
+	  Select this option if you need to print SCSI-Disk probe messages for fast bootup
+
+	  If unsure, say N.
+
+endmenu

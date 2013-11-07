@@ -1,6 +1,7 @@
 #
 # GPIO infrastructure and expanders
 #
+## $Id: Kconfig 5758 2010-03-17 02:07:07Z Noguchi Isao $
 
 config ARCH_WANT_OPTIONAL_GPIOLIB
 	bool
@@ -37,6 +38,22 @@ menuconfig GPIOLIB
 
 if GPIOLIB
 
+## 2010/3/17,added by Panasonic >>>>
+config NR_GPIOS
+    int "Number of GPIO ports (>=1)"
+    default 256
+    help
+        The maximum number of GPIO ports.
+## <<<< 2010/3/17,added by Panasonic
+
+## 2009/12/25,added by Panasonic >>>>
+config GPIO_IRQ
+	bool "Support GPIO IRQ"
+    default n
+	help
+	  Say Y here to add some GPIO calls for IRQ.
+## <<<< 2009/12/25,added by Panasonic
+
 config DEBUG_GPIO
 	bool "Debug GPIO calls"
 	depends on DEBUG_KERNEL
@@ -64,6 +81,20 @@ config GPIO_SYSFS
 	  exported to userspace; this can be useful when debugging.
 
 # put expanders in the right section, in alphabetical order
+
+## 2009/12/1, Added by Panasonic
+config PPC_83xx_GPIO
+	bool "MPC83xx GPIO support"
+	depends on PPC_83xx
+	help
+	  Freescale General-purpose I/O support for MPC837x / MPC831x
+
+## 2009/12/1, Added by Panasonic
+config CODECFPGA_GPIO
+	bool "P2PF CODECFPGA GPIO support"
+	depends on P2PF
+	help
+	  CODEC-FPGA GPIO support for p2pf platform
 
 comment "I2C GPIO expanders:"
 

@@ -10,6 +10,8 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
+/* $Id: spi_mpc83xx.c 5476 2010-03-02 10:23:44Z Noguchi Isao $ */
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
@@ -49,6 +51,7 @@ struct mpc83xx_spi_reg {
 #define	SPMODE_LEN(x)		((x) << 20)
 #define	SPMODE_PM(x)		((x) << 16)
 #define	SPMODE_OP		(1 << 14)
+#define SPMODE_OD       (1 << 12) /* open dorain mode with mpc831x/837x */
 #define	SPMODE_CG(x)		((x) << 7)
 
 /*
@@ -101,6 +104,9 @@ struct mpc83xx_spi {
 	spinlock_t lock;
 
 	struct completion done;
+
+    /* 2009/12/7, added by Panasonic */
+    u8 cs2gpio[128];
 };
 
 struct spi_mpc83xx_cs {
@@ -149,6 +155,28 @@ MPC83XX_SPI_TX_BUF(u8)
 MPC83XX_SPI_TX_BUF(u16)
 MPC83XX_SPI_TX_BUF(u32)
 
+
+/* 2010/1/14, added by Panasonic >>>>>>>>> */
+
+#define MPC83XX_SPI_TX_BUF_3WIRE(type)				\
+u32 mpc83xx_spi_tx_buf_3wire_##type(struct mpc83xx_spi *mpc83xx_spi)	\
+{                                                                       \
+	u32 data;                                                           \
+	const type * tx = mpc83xx_spi->tx;                                  \
+	if (!tx)                                                            \
+		return (u32)(-1);                                               \
+	data = *tx++ << mpc83xx_spi->tx_shift;                              \
+	mpc83xx_spi->tx = tx;                                               \
+	return data;                                                        \
+}
+
+MPC83XX_SPI_TX_BUF_3WIRE(u8)
+MPC83XX_SPI_TX_BUF_3WIRE(u16)
+MPC83XX_SPI_TX_BUF_3WIRE(u32)
+
+/* <<<< 2010/1/14, added by Panasonic */
+
+
 static void mpc83xx_spi_chipselect(struct spi_device *spi, int value)
 {
 	struct mpc83xx_spi *mpc83xx_spi;
@@ -159,7 +187,9 @@ static void mpc83xx_spi_chipselect(struct spi_device *spi, int value)
 
 	if (value == BITBANG_CS_INACTIVE) {
 		if (mpc83xx_spi->deactivate_cs)
-			mpc83xx_spi->deactivate_cs(spi->chip_select, pol);
+            /* 2009/12/7, modified by Panasonic */
+/* 			mpc83xx_spi->deactivate_cs(spi->chip_select, pol); */
+			mpc83xx_spi->deactivate_cs(mpc83xx_spi->cs2gpio[spi->chip_select], pol);
 	}
 
 	if (value == BITBANG_CS_ACTIVE) {
@@ -185,7 +215,9 @@ static void mpc83xx_spi_chipselect(struct spi_device *spi, int value)
 			local_irq_restore(flags);
 		}
 		if (mpc83xx_spi->activate_cs)
-			mpc83xx_spi->activate_cs(spi->chip_select, pol);
+            /* 2009/12/7, modified by Panasonic */
+/* 			mpc83xx_spi->activate_cs(spi->chip_select, pol); */
+			mpc83xx_spi->activate_cs(mpc83xx_spi->cs2gpio[spi->chip_select], pol);
 	}
 }
 
@@ -224,21 +256,34 @@ int mpc83xx_spi_setup_transfer(struct spi_device *spi, struct spi_transfer *t)
 	cs->tx_shift = 0;
 	if (bits_per_word <= 8) {
 		cs->get_rx = mpc83xx_spi_rx_buf_u8;
-		cs->get_tx = mpc83xx_spi_tx_buf_u8;
+/* 2010/1/14, added by Panasonic >>>>>>>>> */
+/* 		cs->get_tx = mpc83xx_spi_tx_buf_u8; */
+		cs->get_tx = (spi->mode&SPI_3WIRE)?mpc83xx_spi_tx_buf_3wire_u8:mpc83xx_spi_tx_buf_u8;
+/* <<<< 2010/1/14, added by Panasonic */
 		if (mpc83xx_spi->qe_mode) {
 			cs->rx_shift = 16;
 			cs->tx_shift = 24;
 		}
+/* 2010/1/14, added by Panasonic >>>>>>>>> */
+        else {
+            cs->rx_shift = (spi->mode&SPI_LSB_FIRST)?8:0;
+            cs->tx_shift = 0;
+        }
+/* <<<< 2010/1/14, added by Panasonic */
 	} else if (bits_per_word <= 16) {
 		cs->get_rx = mpc83xx_spi_rx_buf_u16;
-		cs->get_tx = mpc83xx_spi_tx_buf_u16;
+/* 2010/1/14, added by Panasonic >>>>>>>>> */
+/* 		cs->get_tx = mpc83xx_spi_tx_buf_u16; */
+		cs->get_tx = (spi->mode&SPI_3WIRE)?mpc83xx_spi_tx_buf_3wire_u16:mpc83xx_spi_tx_buf_u16;
+/* <<<< 2010/1/14, added by Panasonic */
 		if (mpc83xx_spi->qe_mode) {
 			cs->rx_shift = 16;
 			cs->tx_shift = 16;
 		}
 	} else if (bits_per_word <= 32) {
 		cs->get_rx = mpc83xx_spi_rx_buf_u32;
-		cs->get_tx = mpc83xx_spi_tx_buf_u32;
+/* 		cs->get_tx = mpc83xx_spi_tx_buf_u32; */
+		cs->get_tx = (spi->mode&SPI_3WIRE)?mpc83xx_spi_tx_buf_3wire_u32:mpc83xx_spi_tx_buf_u32;
 	} else
 		return -EINVAL;
 
@@ -414,8 +459,13 @@ static void mpc83xx_spi_work(struct work_struct *work)
 }
 
 /* the spi->mode bits understood by this driver: */
+#if 1  /* 2010/02/23, modified by Panasonic */
+#define MODEBITS	(SPI_CPOL | SPI_CPHA | SPI_CS_HIGH \
+			| SPI_LSB_FIRST | SPI_LOOP | SPI_3WIRE)
+#else  /* original */
 #define MODEBITS	(SPI_CPOL | SPI_CPHA | SPI_CS_HIGH \
 			| SPI_LSB_FIRST | SPI_LOOP)
+#endif
 
 static int mpc83xx_spi_setup(struct spi_device *spi)
 {
@@ -455,7 +505,9 @@ static int mpc83xx_spi_setup(struct spi_device *spi)
 	if (spi->mode & SPI_CPOL)
 		cs->hw_mode |= SPMODE_CI_INACTIVEHIGH;
 	if (!(spi->mode & SPI_LSB_FIRST))
-		cs->hw_mode |= SPMODE_REV;
+		cs->hw_mode |= SPMODE_REV; /* MSB first */
+    else
+        cs->hw_mode &= ~SPMODE_REV; /* LSB first */
 	if (spi->mode & SPI_LOOP)
 		cs->hw_mode |= SPMODE_LOOP;
 
@@ -594,6 +646,9 @@ static int __init mpc83xx_spi_probe(struct platform_device *dev)
 		mpc83xx_spi->tx_shift = 24;
 	}
 
+    /* 2009/12/7, added by Panasonic */
+    memcpy(mpc83xx_spi->cs2gpio,pdata->cs2gpio,sizeof(mpc83xx_spi->cs2gpio));
+
 	init_completion(&mpc83xx_spi->done);
 
 	mpc83xx_spi->base = ioremap(r->start, r->end - r->start + 1);
@@ -629,6 +684,8 @@ static int __init mpc83xx_spi_probe(struct platform_device *dev)
 	regval = pdata->initial_spmode | SPMODE_INIT_VAL | SPMODE_ENABLE;
 	if (pdata->qe_mode)
 		regval |= SPMODE_OP;
+    else if (pdata->od_mode)
+        regval |= SPMODE_OD;    /* open dorain mode */
 
 	mpc83xx_spi_write_reg(&mpc83xx_spi->base->mode, regval);
 	spin_lock_init(&mpc83xx_spi->lock);

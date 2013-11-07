@@ -1,6 +1,7 @@
 #
 # Makefile for RTC class/drivers.
 #
+## $Id: Makefile 5088 2010-02-09 02:49:16Z Sawada Koji $
 
 ifeq ($(CONFIG_RTC_DEBUG),y)
 	EXTRA_CFLAGS		+= -DDEBUG
@@ -50,6 +51,10 @@ obj-$(CONFIG_RTC_DRV_R9701)	+= rtc-r9701.o
 obj-$(CONFIG_RTC_DRV_RS5C313)	+= rtc-rs5c313.o
 obj-$(CONFIG_RTC_DRV_RS5C348)	+= rtc-rs5c348.o
 obj-$(CONFIG_RTC_DRV_RS5C372)	+= rtc-rs5c372.o
+
+## 2010/1/14, Added by Panasonic >>>>
+obj-$(CONFIG_RTC_DRV_R2113S)	+= rtc-r2113s.o
+
 obj-$(CONFIG_RTC_DRV_S35390A)	+= rtc-s35390a.o
 obj-$(CONFIG_RTC_DRV_S3C)	+= rtc-s3c.o
 obj-$(CONFIG_RTC_DRV_SA1100)	+= rtc-sa1100.o

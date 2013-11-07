@@ -18,6 +18,7 @@
  * Ported to 834x by Randy Vinson <rvinson@mvista.com> using code provided
  * by Hunter Wu.
  */
+/* $Id: ehci-fsl.c 21891 2013-04-16 05:23:30Z Masaki Sato $ */
 
 #include <linux/platform_device.h>
 #include <linux/fsl_devices.h>
@@ -27,6 +28,54 @@
 /* FIXME: Power Management is un-ported so temporarily disable it */
 #undef CONFIG_PM
 
+#ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT
+
+/*!
+ *  Read register of ULPI-PHY
+ */
+static u8 mpc83xx_ulpi_read_phy(struct usb_hcd *hcd, const u8 port, const u8 addr)
+{
+    u32 val;
+    u32 timeout = 1000*300; // timeout = 300msec
+    struct ehci_hcd *ehci = hcd_to_ehci (hcd);
+    u32 __iomem *ulpivp = hcd->regs + FSL_SOC_USB_ULPIVP;
+    ehci_writel(ehci, ULPIRUN|ULPIPORT(port)|ULPIADDR(addr), ulpivp);
+    while(1){
+       val =  ehci_readl(ehci,ulpivp);
+       if(!(val&ULPIRUN))
+           break;
+       timeout--;
+       if(!timeout){
+	 	printk(KERN_DEBUG "mp83xx_ulpi_read_phy timeout!\n");
+		break;
+       }
+       udelay(1);
+    }
+    return (val&ULPIDATRD_MSK)>>ULPIDATRD_SHIFT;
+}
+
+/*!
+ *  Write register of ULPI-PHY
+ */
+static void mpc83xx_ulpi_write_phy(struct usb_hcd *hcd, const u8 port, const u8 addr, const u8 val)
+{
+    struct ehci_hcd *ehci = hcd_to_ehci (hcd);
+    u32 __iomem *ulpivp = hcd->regs + FSL_SOC_USB_ULPIVP;
+    u32 timeout = 1000*300; // timeout = 300msec
+    ehci_writel(ehci, ULPIRUN|ULPIRW|ULPIPORT(port)|ULPIADDR(addr)|ULPIDATWR(val), ulpivp);
+    while(1){
+        if(!(ehci_readl(ehci,ulpivp)&ULPIRUN))
+            break;
+       timeout--;
+       if(!timeout){
+	 	printk(KERN_DEBUG "mp83xx_ulpi_write_phy timeout!\n");
+		break;
+       }
+       udelay(1);
+    }
+}
+
+#endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT */
 
 /* configure so an HC device and id are always provided */
 /* always called with process context; sleeping is OK */
@@ -177,6 +226,40 @@ static void mpc83xx_setup_phy(struct ehci_hcd *ehci,
 		break;
 	}
 	ehci_writel(ehci, portsc, &ehci->regs->port_status[port_offset]);
+
+#ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT
+
+    /*
+     *  setup register of ULPI-PHY
+     */
+    if(phy_mode==FSL_USB2_PHY_ULPI){
+        struct usb_hcd *hcd = ehci_to_hcd(ehci);
+
+        printk(KERN_DEBUG "Select EXTBUS indicator for RXCMD VbusValid\n");
+#ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS
+        /* set UseExternalVbusIndicator */
+        mpc83xx_ulpi_write_phy(hcd,port_offset,0x0B,0x80);
+  #ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS_HIGH
+        /* set IndicatorPassThru */
+        mpc83xx_ulpi_write_phy(hcd,port_offset,0x08,0x40);
+        /* clear IndicatorComplement */
+        mpc83xx_ulpi_write_phy(hcd,port_offset,0x09,0x20);
+  #endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS_HIGH */
+  #ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS_LOW
+        /* set IndicatorComplement & IndicatorPassThru */
+        mpc83xx_ulpi_write_phy(hcd,port_offset,0x08,0x60);
+  #endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS_LOW */
+#endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS */
+/*         { */
+/*             int i; */
+/*             for(i=0;i<=0x18;i++) */
+/*                 printk(KERN_INFO "**** PHY[0x%02X]=0x%02X\n", */
+/*                        i,mpc83xx_ulpi_read_phy(hcd,port_offset,i)); */
+/*         } */
+    }
+
+#endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT */
+
 }
 
 static void mpc83xx_usb_setup(struct usb_hcd *hcd)
@@ -284,6 +367,56 @@ static int ehci_fsl_setup(struct usb_hcd *hcd)
 	return retval;
 }
 
+/* 2009/5/22, Added by Panasonic >>>> */
+static int ehci_fsl_start (struct usb_hcd *hcd)
+{
+    int retval=0;
+
+    retval=ehci_run (hcd);
+    if(retval!=0)
+        return retval;
+
+#ifdef CONFIG_USB_EHCI_FSL_OPTION
+
+    /* set/clear SDIS bit in USBMODE */
+    {
+        struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
+        void __iomem *non_ehci = hcd->regs;
+        unsigned long data = ehci_readl(ehci,non_ehci + FSL_SOC_USB_USBMODE);
+#ifdef CONFIG_USB_EHCI_FSL_STREAM_DISABLE
+        data |= 0x10; 
+#else  /* CONFIG_USB_EHCI_FSL_STREAM_DISABLE */
+        data &= ~0x10; 
+#endif  /* CONFIG_USB_EHCI_FSL_STREAM_DISABLE */
+        ehci_writel(ehci, data, non_ehci + FSL_SOC_USB_USBMODE);
+
+/*         printk(KERN_INFO ">>>>>>>>>>>>>>>>>>> USBMODE=0x%08X\n", */
+/*                ehci_readl(ehci,non_ehci+FSL_SOC_USB_USBMODE) ); */
+    }
+
+#ifdef CONFIG_USB_EHCI_FSL_TXFIFOTHRES
+    /* set TXFILLTUNING register */
+    {
+        struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
+        void __iomem *non_ehci = hcd->regs;
+        int thres = CONFIG_USB_EHCI_FSL_TXFIFOTHRES;
+        int bursize = (ehci_readl(ehci,non_ehci+FSL_SOC_USB_BURSTSIZE)>>8)&0xff;
+        /* TXSCHOH = TXFIFOTHRES * (BURSTSIZE * 4 bytes-per-word) / (40 * 1.267) */
+        int schoh = ((thres * bursize * 4 * 1000) + (40*1267) - 1)  / (40*1267);
+        unsigned long data = ((thres&0x3f)<<16) | (schoh & 0xff);
+        ehci_writel(ehci, data, non_ehci + FSL_SOC_USB_TXFILLTUNING);
+
+/*         printk(KERN_INFO ">>>>>>>>>>>>>>>>>>> TXFILLTUNING=0x%08X\n", */
+/*                ehci_readl(ehci,non_ehci+FSL_SOC_USB_TXFILLTUNING) ); */
+    }
+#endif  /* CONFIG_USB_EHCI_FSL_TXFIFOTHRES */
+
+#endif  /* CONFIG_USB_EHCI_FSL_OPTION */
+
+    return retval;
+}
+/* <<<< 2009/5/22, Added by Panasonic */
+
 static const struct hc_driver ehci_fsl_hc_driver = {
 	.description = hcd_name,
 	.product_desc = "Freescale On-Chip EHCI Host Controller",
@@ -299,7 +432,10 @@ static const struct hc_driver ehci_fsl_hc_driver = {
 	 * basic lifecycle operations
 	 */
 	.reset = ehci_fsl_setup,
-	.start = ehci_run,
+    /* 2009/5/22, Modified by Panasonic >>>> */
+    //	.start = ehci_run,
+	.start = ehci_fsl_start,
+    /* <<<< 2009/5/22, Modified by Panasonic */
 	.stop = ehci_stop,
 	.shutdown = ehci_shutdown,
 
@@ -309,6 +445,7 @@ static const struct hc_driver ehci_fsl_hc_driver = {
 	.urb_enqueue = ehci_urb_enqueue,
 	.urb_dequeue = ehci_urb_dequeue,
 	.endpoint_disable = ehci_endpoint_disable,
+	.endpoint_reset = ehci_endpoint_reset,
 
 	/*
 	 * scheduling support
@@ -324,6 +461,14 @@ static const struct hc_driver ehci_fsl_hc_driver = {
 	.bus_resume = ehci_bus_resume,
 	.relinquish_port = ehci_relinquish_port,
 	.port_handed_over = ehci_port_handed_over,
+
+	.clear_tt_buffer_complete = ehci_clear_tt_buffer_complete,
+
+#ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT
+    /* ULPI i/f */
+    .ulpi_read = mpc83xx_ulpi_read_phy,
+    .ulpi_write = mpc83xx_ulpi_write_phy,
+#endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT */
 };
 
 static int ehci_fsl_drv_probe(struct platform_device *pdev)

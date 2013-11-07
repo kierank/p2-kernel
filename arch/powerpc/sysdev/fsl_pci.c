@@ -13,6 +13,8 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
+/* $Id: fsl_pci.c 11740 2011-01-17 07:25:21Z Noguchi Isao $ */
+
 #include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
@@ -26,6 +28,10 @@
 #include <asm/machdep.h>
 #include <sysdev/fsl_soc.h>
 #include <sysdev/fsl_pci.h>
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE)
+#include "mpc83xx_pci.h"
+#endif
 
 #if defined(CONFIG_PPC_85xx) || defined(CONFIG_PPC_86xx)
 /* atmu setup for fsl pci/pcie controller */
@@ -251,6 +257,69 @@ DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8641D, quirk_fsl_pcie_header);
 DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8610, quirk_fsl_pcie_header);
 #endif /* CONFIG_PPC_85xx || CONFIG_PPC_86xx */
 
+#if defined(CONFIG_PPC_MPC83XX_PCIE)
+
+/* 2011/1/12, modified by Panasonic (SAV) */
+/* void setup_indirect_pcie(struct pci_controller *hose, u32 cfg_addr); */
+void setup_indirect_pcie(struct pci_controller *hose, u32 cfg_addr, u32 cfg_size);
+
+/* 2010/7/23, modified by Panasonic (SAV) */
+
+static int __init
+mpc83xx_setup_pcie(struct pci_controller *hose, struct resource *reg)
+{
+	void __iomem *hose_cfg_base=NULL;
+	u32 val;
+	u32 cfg_bar;
+    u32 cfg_size;         /* 2011/1/12, added by Panasonic (SAV) */
+    struct resource rsrc_cfg; /* 2011/1/13, added by Panasonic (SAV) */
+    int ret=0;
+
+    hose_cfg_base = ioremap(reg->start, resource_size(reg));
+    if(!hose_cfg_base){
+        ret = -ENOMEM;
+        goto err;
+    }
+
+	val = in_le32(hose_cfg_base + PEX_LTSSM_STAT);
+	if (val < PEX_LTSSM_STAT_L0)
+		hose->indirect_type |= PPC_INDIRECT_TYPE_NO_PCIE_LINK;
+
+/* 2011/1/12&13, modified by Panasonic (SAV) ---> */
+
+    if(!of_address_to_resource(hose->dn, 1, &rsrc_cfg)){
+
+        cfg_bar = rsrc_cfg.start;
+        cfg_size = rsrc_cfg.end - rsrc_cfg.start + 1;
+
+    } else {
+
+        cfg_bar = in_le32(hose_cfg_base + PEX_OUTWIN0_BAR);
+        cfg_size = in_le32(hose_cfg_base + PEX_OUTWIN0_AR) & 0xfffff000;
+
+    }
+	if (!cfg_bar||!cfg_size) {
+		/* PCI-E isn't configured. */
+		ret = -ENODEV;
+		goto err;
+	}
+
+/* <--- 2011/1/12&13, modified by Panasonic (SAV) */
+
+
+/* 2011/1/12, modified by Panasonic (SAV) */
+/*     setup_indirect_pcie(hose, cfg_bar); */
+    setup_indirect_pcie(hose, cfg_bar, cfg_size);
+
+ err:
+    if(ret){
+        if(hose_cfg_base!=NULL)
+            iounmap(hose_cfg_base);
+    }
+    return ret;
+}
+#endif /* CONFIG_PPC_MPC83XX_PCIE */
+
 #if defined(CONFIG_PPC_83xx)
 int __init mpc83xx_add_bridge(struct device_node *dev)
 {
@@ -258,13 +327,20 @@ int __init mpc83xx_add_bridge(struct device_node *dev)
 	struct pci_controller *hose;
 	struct resource rsrc;
 	const int *bus_range;
-	int primary = 1, has_address = 0;
+    /* 2010/7/26, 2010/11/26 modified by Panasonic (SAV) ---> */
+    //	int primary = 1, has_address = 0;
+	int primary = 0;
+    /* <--- 2010/7/26, 2010/11/26 modified by Panasonic (SAV) */
 	phys_addr_t immr = get_immrbase();
 
 	pr_debug("Adding PCI host bridge %s\n", dev->full_name);
 
+    /* 2010/7/26, modified by Panasonic (SAV) */
 	/* Fetch host bridge registers address */
-	has_address = (of_address_to_resource(dev, 0, &rsrc) == 0);
+	if(of_address_to_resource(dev, 0, &rsrc)){
+        pr_warning("Can't get pci register base!\n");
+        return -ENOMEM;
+    }
 
 	/* Get bus range if any */
 	bus_range = of_get_property(dev, "bus-range", &len);
@@ -281,23 +357,59 @@ int __init mpc83xx_add_bridge(struct device_node *dev)
 	hose->first_busno = bus_range ? bus_range[0] : 0;
 	hose->last_busno = bus_range ? bus_range[1] : 0xff;
 
-	/* MPC83xx supports up to two host controllers one at 0x8500 from immrbar
-	 * the other at 0x8600, we consider the 0x8500 the primary controller
-	 */
-	/* PCI 1 */
-	if ((rsrc.start & 0xfffff) == 0x8500) {
-		setup_indirect_pci(hose, immr + 0x8300, immr + 0x8304, 0);
-	}
-	/* PCI 2 */
-	if ((rsrc.start & 0xfffff) == 0x8600) {
-		setup_indirect_pci(hose, immr + 0x8380, immr + 0x8384, 0);
-		primary = 0;
-	}
+    /* 2010/7/26, modified by Panasonic (SAV) */
+	if (of_device_is_compatible(dev, "fsl,mpc8349-pci")) {
 
+        struct resource rsrc_cfg;
+
+        if(!of_address_to_resource(dev, 1, &rsrc_cfg)){
+
+            setup_indirect_pci(hose, rsrc_cfg.start, rsrc_cfg.start+4, 0);
+
+        } else {
+
+            /* MPC83xx supports up to two host controllers one at 0x8500 from immrbar
+             * the other at 0x8600, we consider the 0x8500 the primary controller
+             */
+            /* PCI 1 */
+            if ((rsrc.start & 0xfffff) == 0x8500) {
+                setup_indirect_pci(hose, immr + 0x8300, immr + 0x8304, 0);
+            }
+            /* PCI 2 */
+            if ((rsrc.start & 0xfffff) == 0x8600) {
+                setup_indirect_pci(hose, immr + 0x8380, immr + 0x8384, 0);
+                //primary = 0;
+            }
+        }
+
+        /*
+         * Controller at offset 0x8500 is primary
+         */
+        if ((rsrc.start & 0xfffff) == 0x8500)
+            primary = 1;
+        /* 2010/11/26, commented by Panasonic (SAV) */
+/*         else */
+/*             primary = 0;  */
+
+    }
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE)
+    /* 2010/7/23,2010/7/26 modified by Panasonic (SAV) */
+	if (of_device_is_compatible(dev, "fsl,mpc83xx-pcie")) {
+		int ret = mpc83xx_setup_pcie(hose, &rsrc);
+		if (ret){
+            pcibios_free_controller(hose);
+            return ret;
+        }
+	}
+#endif  /* CONFIG_PPC_MPC83XX_PCIE */
+
+#if ! defined(CONFIG_DISABLE_INIT_MESSAGE) /* Added by Panasonic for fast bootup */
 	printk(KERN_INFO "Found MPC83xx PCI host bridge at 0x%016llx. "
 	       "Firmware bus number: %d->%d\n",
 	       (unsigned long long)rsrc.start, hose->first_busno,
 	       hose->last_busno);
+#endif /* ! CONFIG_DISABLE_INIT_MESSAGE */
 
 	pr_debug(" ->Hose at 0x%p, cfg_addr=0x%p,cfg_data=0x%p\n",
 	    hose, hose->cfg_addr, hose->cfg_data);
@@ -306,6 +418,10 @@ int __init mpc83xx_add_bridge(struct device_node *dev)
 	/* This also maps the I/O region and sets isa_io/mem_base */
 	pci_process_bridge_OF_ranges(hose, dev, primary);
 
+    /* 2010/7/26, commented by Panasonic (SAV) */
+/* 	if (unlikely(primary)) */
+/* 		primary = 0; */
+ 
 	return 0;
 }
 #endif /* CONFIG_PPC_83xx */

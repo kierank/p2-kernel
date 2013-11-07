@@ -15,6 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
+/* $Id: spi_bitbang.c 11136 2010-12-14 05:30:50Z Noguchi Isao $ */
 
 #include <linux/init.h>
 #include <linux/spinlock.h>
@@ -73,7 +74,9 @@ static unsigned bitbang_txrx_8(
 	u8			*rx = t->rx_buf;
 
 	while (likely(count > 0)) {
-		u8		word = 0;
+/* 2010/12/13, modified by Panasonic (SAV) */
+/* 		u8		word = 0; */
+		u8		word = spi->mode&SPI_3WIRE? 0xff: 0;
 
 		if (tx)
 			word = *tx++;
@@ -99,7 +102,9 @@ static unsigned bitbang_txrx_16(
 	u16			*rx = t->rx_buf;
 
 	while (likely(count > 1)) {
-		u16		word = 0;
+/* 2010/12/13, modified by Panasonic (SAV) */
+/* 		u16		word = 0; */
+        u16		word = spi->mode&SPI_3WIRE? 0xffff: 0;
 
 		if (tx)
 			word = *tx++;
@@ -125,7 +130,9 @@ static unsigned bitbang_txrx_32(
 	u32			*rx = t->rx_buf;
 
 	while (likely(count > 3)) {
-		u32		word = 0;
+/* 2010/12/13, modified by Panasonic (SAV) */
+/* 		u32		word = 0; */
+        u32     word = spi->mode&SPI_3WIRE? 0xffffff: 0;
 
 		if (tx)
 			word = *tx++;

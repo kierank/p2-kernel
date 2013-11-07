@@ -18,6 +18,8 @@ struct mpage_data {
 	unsigned use_writepage;
 };
 
+#include <linux/bio.h> /* Added by Panasonic for RT */
+
 struct writeback_control;
 
 struct bio *mpage_bio_submit(int rw, struct bio *bio);
@@ -30,5 +32,28 @@ int mpage_writepages(struct address_space *mapping,
 		struct writeback_control *wbc, get_block_t get_block);
 int mpage_writepage(struct page *page, get_block_t *get_block,
 		struct writeback_control *wbc);
+
+/* for reservoir fs */
+static inline struct bio *
+mpage_alloc(struct block_device *bdev,
+		sector_t first_sector, int nr_vecs,
+		gfp_t gfp_flags)
+{
+	struct bio *bio;
+
+	bio = bio_alloc(gfp_flags, nr_vecs);
+
+	if (bio == NULL && (current->flags & PF_MEMALLOC)) {
+		while (!bio && (nr_vecs /= 2))
+			bio = bio_alloc(gfp_flags, nr_vecs);
+	}
+
+	if (bio) {
+		bio->bi_bdev = bdev;
+		bio->bi_sector = first_sector;
+	}
+	return bio;
+}
+/* <-- Moved by Panasonic for RT */
 
 #endif

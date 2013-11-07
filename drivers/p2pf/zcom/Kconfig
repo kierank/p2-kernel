@@ -1,0 +1,30 @@
+## $Id: Kconfig 13117 2011-03-10 04:38:15Z Noguchi Isao $
+
+menuconfig ZCOM
+        bool "Zion Com Port Driver"
+        depends on ZION
+
+
+if ZCOM
+
+config ZCOM_OPTION
+    bool "Enable ZCOM option settings"
+    default n
+
+config ZCOM_TX_BUFFER_NUM
+    int "Buffer number for TX packets"
+    default 64
+    depends on ZCOM_OPTION
+
+config ZCOM_RX_BUFFER_NUM
+    int "Buffer number for RX packets"
+    default 64
+    depends on ZCOM_OPTION
+
+config ZCOM_LOG_BUFFER_NUM
+    int "Buffer number for LOG"
+    default 64
+    depends on ZCOM_OPTION
+
+
+endif # ZCOM

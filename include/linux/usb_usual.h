@@ -5,6 +5,7 @@
  * Copyright (c) 1999-2002 Matthew Dharm (mdharm-usb@one-eyed-alien.net)
  * Copyright (c) 1999 Michael Gee (michael@linuxspecific.com)
  */
+/* $Id: usb_usual.h 13963 2011-04-19 02:42:59Z Noguchi Isao $ */
 
 #ifndef __LINUX_USB_USUAL_H
 #define __LINUX_USB_USUAL_H
@@ -52,7 +53,15 @@
 	US_FLAG(MAX_SECTORS_MIN,0x00002000)			\
 		/* Sets max_sectors to arch min */		\
 	US_FLAG(BULK_IGNORE_TAG,0x00004000)			\
-		/* Ignore tag mismatch in bulk operations */
+		/* Ignore tag mismatch in bulk operations */ \
+/* 2011/4/19, added by Panasonic (PAVBU) ---> */ \
+    US_FLAG(FAST_RECOVERY,0x00400000)           \
+        /* Enable fast error recovery */ \
+/* <--- 2011/4/19, added by Panasonic (PAVBU) */ \
+/* 2011/4/11, added by Panasonic (PAVBU) --> */ \
+    US_FLAG(FORCE_BULK_RESET,0x00800000)             \
+        /* Use bulk reset, not port reset in bulk operations  */ \
+/* <--- 2011/4/11, added by Panasonic (PAVBU) */
 
 
 #define US_FLAG(name, value)	US_FL_##name = value ,
@@ -102,6 +111,11 @@ enum { US_DO_ALL_FLAGS };
 #ifdef CONFIG_USB_STORAGE_SDDR55
 #define US_PR_SDDR55	0x82		/* SDDR-55 (made up) */
 #endif
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+#ifdef CONFIG_USB_STORAGE_SM331
+#define US_PR_SM331	0x83		/* SM331 */
+#endif
+/*------------------------------------------*/
 #define US_PR_DPCM_USB  0xf0		/* Combination CB/SDDR09 */
 #ifdef CONFIG_USB_STORAGE_FREECOM
 #define US_PR_FREECOM   0xf1		/* Freecom */

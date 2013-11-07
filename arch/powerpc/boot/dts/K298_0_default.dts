@@ -1,0 +1,658 @@
+/*
+ * MPC8315E RDB Device Tree Source
+ *
+ * Copyright (C) 2007-2008 Freescale Semiconductor Inc. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
+ */
+/* $Id: K298_0_default.dts 7336 2010-06-03 04:40:50Z Noguchi Isao $ */
+
+/dts-v1/;
+
+/ {
+	model = "MPC8315ERDB";
+	compatible = "fsl,mpc8315erdb", "MPC831xRDB", "MPC83xxRDB";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	aliases {
+		ethernet0 = &enet0;
+		/* ethernet1 = &enet1; */
+		serial0 = &serial0;
+		/* serial1 = &serial1; */
+		pci0 = &pci0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		PowerPC,8315@0 {
+			device_type = "cpu";
+			reg = <0x0>;
+			d-cache-line-size = <0x20>;	// 32 bytes
+			i-cache-line-size = <0x20>;	// 32 bytes
+			d-cache-size = <0x4000>;		// L1, 16K
+			i-cache-size = <0x4000>;		// L1, 16K
+			timebase-frequency = <0>;	// from bootloader
+			bus-frequency = <0>;		// from bootloader
+			clock-frequency = <0>;		// from bootloader
+			32-bit;
+		};
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0x00000000 0x08000000>;	// 128MB at 0
+	};
+
+	localbus@e0005000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "fsl,mpc8315-elbc",
+					"fsl,elbc", "simple-bus";
+		reg = <0xe0005000 0x1000>;
+		interrupts = <0x4d 0x8>;
+		interrupt-parent = < &ipic >;
+
+		flash0: flash@f0000000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			device_type = "rom";
+			compatible = "cfi-flash";
+			ranges = <0x0 0xf0000000 0x02000000>;
+			reg = <0xf0000000 0x02000000>; /* CS0: 32MB */
+			probe-type = "CFI";
+			bank-width = <2>;
+			device-width = <2>;
+            boot1st@0 {
+                reg = <0x0 0x20000>;
+                label = "HRCW+1stBoot";
+            };
+            boot2nd@20000 {
+                reg = <0x20000 0x40000>;
+				label = "2ndBoot1";
+            };
+            boot2nd@60000 {
+                reg = <0x60000 0x40000>;
+				label = "2ndBoot2";
+            };
+            ubootenv@A0000 {
+                reg = <0xA0000 0x20000>;
+				label = "uboot_env";
+            };
+            backup@C0000 {
+                reg = <0xC0000 0x200000>;
+                label = "backup1";
+            };
+            backup@2C0000 {
+                reg = <0x2C0000 0x200000>;
+                label = "backup2";
+            };
+            kernel@4C0000 {
+                reg = <0x4C0000 0x400000>;
+                label = "kernel";
+            };
+            rootfs@8C0000 {
+                reg = <0x8C0000 0x1100000>;
+                label = "rootfs+App";
+            };
+            vup_kernel@19C0000 {
+                reg = <0x19C0000 0x140000>;
+                label = "vup kernel";
+            };
+            vup_rootfs@1B00000 {
+                reg = <0x1B00000 0x400000>;
+                label = "vup rootfs";
+            };
+            fpga@1F00000 {
+                reg = <0x1F00000 0x80000>;
+                label = "fpga1";
+            };
+            fpga@1F80000 {
+                reg = <0x1F80000 0x80000>;
+                label = "fpga2";
+            };
+		};
+
+        msufpga: fpga@e8000000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			device_type = "fpga";
+			compatible = "p2pf,fpga","p2pf,msudev-fpga";
+			ranges = <0x0 0xe8000000 0x8000>; // CS2
+
+            fpga_pic: pic@0100 {
+                device_type = "pic";
+    			compatible = "p2pf,fpga-pic","p2pf,msudev-fpga-pic";
+                reg = <0x0100 0x0100>;
+            };
+
+            fpga_key: gpio@0200 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio","p2pf,msudev-fpga-gpio";
+                reg = <0x0200 0x0002>;
+                base = <48>;          /* Added by Panasonic */
+                pins = <16>;          /* Added by Panasonic */
+                gpio-map = <          /* Added by Panasonic */
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+                    0   0   0   // RIGHT
+                    1   0   0   // LEFT
+                    2   0   0   // DOWN
+                    3   0   0   // UP
+                    4   0   0   // SET
+                    5   0   0   // MENU
+                    6   0   0   // EXIT
+                    7   0   0   // START
+                    8   0   0   // F3
+                    9   0   0   // F2
+                    10  0   0   // F1
+                    11  0   0   // POWER
+                >;
+                mask-pins = < 12 13 14 15 >;          /* Added by Panasonic */
+                gpio-controller;
+
+                key@0 {
+                    device_type = "key";
+            		compatible = "p2pf,gpio-key","p2pf,msudev-gpio-key";
+                    gpios = <
+                            &fpga_key 0 0  // RIGHT
+                            &fpga_key 1 0  // LEFT
+                            &fpga_key 2 0  // DOWN 
+                            &fpga_key 3 0  // UP
+                            &fpga_key 4 0  // SET
+                            &fpga_key 5 0  // MENU
+                            &fpga_key 6 0  // EXIT
+                            &fpga_key 7 0  // START
+                            &fpga_key 8 0  // F3
+                            &fpga_key 9 0  // F2
+                            &fpga_key 10 0 // F1
+                            &fpga_key 11 0 // POWER
+                        >;             
+                    key-map = <
+                    //   key_no   gpios[]  REV
+                            0       11      1   // POWER
+                            1       3       1   // UP
+                            2       2       1   // DOWN
+                            3       1       1   // LEFT
+                            4       0       1   // RIGHT
+                            5       4       1   // SET
+                            6       6       1   // EXIT
+                            7       5       1   // MENU
+                            8       7       1   // START
+                            9       10      1   // F1
+                            10      9       1   // F2
+                            11      8       1   // F3
+                        >;
+                };
+            };
+
+            fpga_pio: gpio@0202 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio","p2pf,msudev-fpga-gpio";
+                reg = <0x0202 0x0002>;
+                base = <32>;          /* Added by Panasonic */
+                pins = <16>;          /* Added by Panasonic */
+                gpio-map = <          /* Added by Panasonic */
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+                    0   0   0   // SSD_OCI_N
+                    1   0   0   // USB_OCI_N
+                    2   1   0   // SSD_LED_SEL
+                    3   1   1   // LED_N[3]
+                    4   1   1   // LED_N[2]
+                    5   0   0   // BATTERY_N
+                    7   1   0   // TESTP[8]
+                    8   1   0   // TESTP[7]
+                    9   1   0   // TESTP[6]
+                    10  1   0   // TESTP[5]
+                    11  1   0   // TESTP[4]
+                    12  1   0   // TESTP[3]
+                    13  1   0   // TESTP[2]
+                    14  1   0   // TESTP[1]
+                    15  1   0   // TESTP[0]
+                >;
+                mask-pins = < 6 >;          /* Added by Panasonic */
+                gpio-controller;
+            };
+
+            fpga_adc: adc@0300 {
+                device_type = "adc";
+    			compatible = "p2pf,fpga-adc","p2pf,msudev-fpga-adc";
+                reg = <0x0300 0x0100>;
+                num = <5>;
+            };
+
+            fpga_led: led@0400 {
+                device_type = "led";
+    			compatible = "p2pf,fpga-led","p2pf,msudev-fpga-led";
+                reg = <0x0400 0x0100>;
+                num = <4>;
+            };
+
+            fpga_buzzer: buzzer@0500 {
+                device_type = "buzzer";
+    			compatible = "p2pf,fpga-buzzer","p2pf,msudev-fpga-buzzer";
+                reg = <0x0500 0x0100>;
+            };
+
+            fpga_wdt: wdt@600 {
+                device_type = "watchdog";
+                compatible = "p2pf,p2msu-wdt","p2pf,msudev-fpga-wdt";
+                reg = <0x0600 0x0100>;
+                ticks = <180>; // Watchdog timeout in ticks (1-255) : timeout=90sec
+                period = <500>; // Period in ticks [msec] : 500msec
+            };
+
+            codecvga: vga@1000 {
+            	device_type = "display";
+	            compatible = "p2pf,codecvga","p2pf,msudev-codecvga";
+                reg = <0x1000 0x1000>;
+                fb-handle = <&codecfpga_vga>;
+                sprite-handle = <&codecvga_sprite>;
+                dma-chan = <3>;
+            };
+
+            codecvga_sprite: sprite {
+                compatible = "p2pf,codecvga-sprite";
+                sprite-num = <4>;
+                reg = < 0x4000 0x1000
+                        0x5000 0x1000
+                        0x6000 0x1000
+                        0x7000 0x1000 >;                
+            };
+
+        };
+
+        codecfpga_vga: fb@ec000000 {
+            compatible = "p2pf,codecvga-fb";
+            reg = <0xec000000 0x02000000>;
+        };
+
+	};
+
+	immr@e0000000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		#interrupt-cells = <2>;
+		device_type = "soc";
+		compatible = "simple-bus","fsl,mpc8315-immr";
+		ranges = <0x0 0xe0000000 0x00100000>;
+		reg = <0xe0000000 0x00000200>;
+		bus-frequency = <0>;
+
+		wdt@200 {
+			device_type = "watchdog";
+			compatible = "mpc83xx_wdt";
+			reg = <0x200 0x100>;
+		};
+
+        gpio0: gpio@C00 {
+			#gpio-cells = <2>;
+            device_type = "gpio";
+			compatible = "fsl,mpc83xx-gpio";
+			reg = <0xc00 0x100>;
+			interrupts = <74 0x8>;
+			interrupt-parent = <&ipic>;
+			base = <0>;          /* Added by Panasonic */
+            pins = <32>;          /* Added by Panasonic */
+            gpio-map = <          /* Added by Panasonic */
+            /*
+             *  *** register setting  ***
+             *  pin : pin number
+             *  dir : dirction (0:IN, 1:OUT)
+             *  odr : open drain output (0:disable, 1:enable)
+             *  dat : data latch value (0:'L', 1:'H')
+             *  icr : IRQ control (0:any change trigger, 1: down edge only)
+             */
+            /* pin dir odr dat icr */
+                0   0   0   1   0       // dipsw[4]
+                1   0   0   1   0       // dipsw[3]
+                2   0   0   1   0       // dipsw[2]
+                3   0   0   1   0       // dipsw[1]
+                4   0   0   0   0       // PCB_VER[1]
+                5   0   0   0   0       // PCB_VER[0]
+                6   1   0   0   0       // POFF_P
+                7   1   0   0   0       // RTC_CS
+//               10   1   0   0   0       // USB_HOST_N
+//               11   1   0   0   0       // USB_POFF_N
+/*
+               12   1   1   1   0       // nCONFIG
+               13   0   0   1   0       // nSTATUS
+               14   0   0   1   0       // CONF_DONE
+*/
+               18   1   0   0   0       // SSD_HOST_P
+               20   1   0   0   0       // SSD_POFF_N
+               21   0   0   0   0       // SSD_DET_P
+//               22   1   0   1   0       // RST_RICOH_N
+               23   0   0   0   0       // CARD_DET_P
+               26   1   0   1   0       // LED_N[1]
+               27   1   0   1   0       // LED_N[0]
+            >;
+            mask-pins = < 8 9 15 16 17 24 25 >;          /* Added by Panasonic */
+ 			gpio-controller;
+
+            pm@0 {
+                compatible = "p2pf,pm","p2pf,pm-K298";
+                gpios = <&gpio0 6 0>; // index=0: POFF_P is pin 6 of GPIO#0 in mpc8315
+                poff = <
+                        0   // index of gpios property is 0.
+                        1   // 0: active-low, non-0: active-high
+                        >;
+            };
+        };
+
+		i2c@3000 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			device_type = "i2c";
+			compatible = "fsl-i2c";
+			reg = <0x3000 0x100>;
+			interrupts = <0xe 0x8>;
+			interrupt-parent = < &ipic >;
+			dfsrr;
+		};
+
+		dma@8000 {
+			device_type = "dma";
+			compatible = "fsl-dma";
+			reg = <0x8000 0x300>;
+			interrupts = <71 0x8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		spi@7000 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			device_type = "spi";
+			compatible = "fsl,spi","fsl,mpc837x-spi";
+			reg = <0x7000 0x1000>;
+			interrupts = <0x10 0x8>;
+			interrupt-parent = < &ipic >;
+			mode = "cpu";
+            open-drain; // open-drain mode
+            gpios = <&gpio0 7 0>; // RTC_CS is pin 7 of GPIO
+
+            // RICOH R2113S01 RTC device with SPI interface
+            R2113S01: rtc@0 {
+                device_type = "rtc";
+                compatible = "r2113s","r2113s01","linux,rtc-r2113s";
+                reg = <0>;  // index of 'gpios' property in parent's node (spi)
+                spi-cpha;   // clock starts toggling at the beginning of the data transfer
+                spi-cpol;   // inactive state of clock is high
+                spi-cspol;  // active state of CS is high
+                spi-3wire;  // SI/SO signals shared
+                spi-max-frequency = <150000>;  // 150KHz(MAX 1MHz)
+            };
+		};
+
+		/* phy type (ULPI, UTMI, UTMI_WIDE, SERIAL) */
+		usb@23000 {
+			device_type = "usb";
+			compatible = "fsl-usb2-dr";
+			reg = <0x23000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			interrupt-parent = < &ipic >;
+			interrupts = <0x26 0x8>;
+			phy_type = "utmi";          /* Added by Panasonic */
+			phy_clk  = "24mhz";         /* Added by Panasonic */
+			dr_mode = "host";     /* for HOST */
+			max_ep_nr = <3>;            /* Added by Panasonic */
+		};
+
+		mdio@24520 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			device_type = "mdio";
+			compatible = "fsl,gianfar-mdio";
+			reg = <0x24520 0x20>;
+			phy2: ethernet-phy@2 {
+				reg = <0x2>;
+				device_type = "ethernet-phy";
+			};
+/*
+			phy1: ethernet-phy@1 {
+				reg = <0x1>;
+				device_type = "ethernet-phy";
+			};
+*/
+		};
+
+		enet0: ethernet@24000 {
+			cell-index = <0>;
+			device_type = "network";
+			model = "eTSEC";
+			compatible = "gianfar";
+			reg = <0x24000 0x1000>;
+			address = [ 00 00 00 00 00 00 ];
+			local-mac-address = [ 00 00 00 00 00 00 ];
+			interrupts = <0x20 0x8 0x21 0x8 0x22 0x8>;
+			// phy-connection-type = "mii";
+			interrupt-parent = < &ipic >;
+			phy-handle = < &phy2 >;
+			sleep = <0xb00 0xc0000000>;
+			fsl,magic-packet;
+		};
+/*
+		enet1: ethernet@25000 {
+			cell-index = <1>;
+			device_type = "network";
+			model = "eTSEC";
+			compatible = "gianfar";
+			reg = <0x25000 0x1000>;
+			address = [ 00 00 00 00 00 00 ];
+			local-mac-address = [ 00 00 00 00 00 00 ];
+			interrupts = <0x23 0x8 0x24 0x8 0x25 0x8>;
+			// phy-connection-type = "mii";
+			interrupt-parent = < &ipic >;
+			phy-handle = < &phy1 >;
+			sleep = <0xb00 0x30000000>;
+			fsl,magic-packet;
+		};
+*/
+		serial0: serial@4500 {
+			cell-index = <0>;
+			device_type = "serial";
+			compatible = "ns16550";
+			reg = <0x4500 0x100>;
+			clock-frequency = <0>;
+			interrupts = <0x9 0x8>;
+			interrupt-parent = < &ipic >;
+		};
+/*
+		serial1: serial@4600 {
+			cell-index = <1>;
+			device_type = "serial";
+			compatible = "ns16550";
+			reg = <0x4600 0x100>;
+			clock-frequency = <0>;
+			interrupts = <0xa 0x8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		serdes@e3000 {
+			model = "SerDes";
+			compatible = "fsl,serdes";
+			reg = <0xe3000 0x100>;
+			vdd-1v;
+			pex-x1;
+			protocol = "pex";
+			clock = <100>;
+		};
+
+		tdm@16000 {
+			device_type = "tdm";
+			compatible = "fsl,mpc8315-tdm";
+			reg = <0x16000 0x200 0x2c000 0x2000>;
+			clock-frequency = <0>;
+			interrupts = <0x53 0x8 0x5e 0x8 0x3 0x8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		legerity {
+			device_type="slic";
+			compatible = "legerity-slic";
+			clock-frequency = <0>;
+			interrupts = <0x16 0x8>;
+			interrupt-parent = < &ipic >;
+		};
+*/
+
+		crypto@30000 {
+			device_type = "crypto";
+			model = "SEC2";
+			compatible = "talitos";
+			reg = <0x30000 0x10000>;
+			interrupts = <0xb 0x8>;
+			interrupt-parent = < &ipic >;
+			/* Rev. 2.2 */
+			num-channels = <4>;
+			channel-fifo-len = <0x18>;
+			exec-units-mask = <0x0000097c>;
+			descriptor-types-mask = <0x03a30abf>;
+		};
+
+		/* SATA 1 (eSATA i/f) */
+		sata@18000 {
+			compatible = "fsl,mpc8315-sata","fsl,pq-sata";
+			reg = <0x18000 0x1000>;
+			interrupts = <0x2c 0x8>;
+			interrupt-parent = < &ipic >;
+
+            // when CONFIG_SATA_FSL_TX_AMP_CTRL is 'y'
+            // added by Panasonic
+            tx-amp-ctrl = <16>;
+
+            // when CONFIG_SATA_FSL_RX_FIFO_SIZE is 'y'
+            // added by Panasonic
+            rx-fifo-size = <16>;
+
+            // when CONFIG_SATA_EH_SPECIAL_RECOVERY is 'y'
+            // added by Panasonic
+            primary-port;   // SATA port1 only
+            special-recovery = "phy-reset"; // "gpio" or "phy-reset" 
+
+            // when CONFIG_SATA_FSL_LIMIT_SPEED_OF is 'y'
+            // added by Panasonic
+            //      "gen1" : 1st-generation (1.5Gbps)
+            //      "gen2" : 2nd-generation (3.0Gbps)
+            limit-speed = "gen1";   // 1.5Gbps
+		};
+
+		/* SATA 2 (internal SSD i/f) */
+		sata@19000 {
+			compatible = "fsl,mpc8315-sata","fsl,pq-sata";
+			reg = <0x19000 0x1000>;
+			interrupts = <0x2d 0x8>;
+			interrupt-parent = < &ipic >;
+
+            // when CONFIG_SATA_FSL_RX_FIFO_SIZE is 'y'
+            // added by Panasonic
+            rx-fifo-size = <16>;
+
+            // when CONFIG_SATA_EH_SPECIAL_RECOVERY is 'y'
+            // added by Panasonic
+            special-recovery = "gpio"; // "gpio" or "phy-reset"
+            gpios = <&gpio0 20 0>; // SSD_POFF_N is pin 20 of GPIO#0 in mpc8315
+            recovery-gpio = <
+                        0   // index of gpios property is 0.
+                        0   // 0: active-low, non-0: active-high
+                        >;
+
+            // when CONFIG_SATA_FSL_LIMIT_SPEED_OF is 'y'
+            // added by Panasonic
+            //      "gen1" : 1st-generation (1.5Gbps)
+            //      "gen2" : 2nd-generation (3.0Gbps)
+            limit-speed = "gen1";   // 1.5Gbps
+		};
+
+		/* IPIC
+		 * interrupts cell = <intr #, sense>
+		 * sense values match linux IORESOURCE_IRQ_* defines:
+		 * sense == 8: Level, low assertion
+		 * sense == 2: Edge, high-to-low change
+		 */
+		ipic: pic@700 {
+			interrupt-controller;
+			#address-cells = <0>;
+			#interrupt-cells = <2>;
+			reg = <0x700 0x100>;
+			device_type = "ipic";
+		};
+/*
+		ipic-msi@7c0 {
+			compatible = "fsl,IPIC-MSI";
+			reg = <0x7c0 0x40>;
+			msi-available-ranges = <0x0 0x100>;
+			interrupts = < 0x43 0x8
+				       0x4  0x8
+				       0x51 0x8
+				       0x52 0x8
+				       0x56 0x8
+				       0x57 0x8
+				       0x58 0x8
+				       0x59 0x8 >;
+			interrupt-parent = < &ipic >;
+		};
+*/
+		power@b00 {
+			linux,phandle = <0xb00>;
+			device_type = "power";
+			compatible = "fsl,mpc831x-pmc", "fsl,mpc83xx-pmc";
+			reg = <0xb00 0x100
+				0xa00 0x100>;
+			interrupts = <0x50 0x8>;
+			interrupt-parent = < &ipic>;
+		};
+
+		timer@500 {
+			linux,phandle = <0x500>;
+			device_type = "timer";
+			compatible = "fsl,mpc831x-gtm", "fsl,mpc83xx-gtm";
+			reg = <0x500 0x100>;
+			interrupts = <0x48 0x8>;
+			interrupt-parent = < &ipic>;
+		};
+	};
+
+	pci0:pci@e0008500 {
+		interrupt-map-mask = <0xf800 0x0 0x0 0x7>;
+		interrupt-map = <
+				/* IDSEL 0x14 : Ricoh */
+				   0xa000 0x0 0x0 0x1 &ipic 0x14 0x8     /*INTD*/
+				   0xa000 0x0 0x0 0x2 &ipic 0x12 0x8     /*INTB*/
+				   0xa000 0x0 0x0 0x3 &ipic 0x13 0x8     /*INTC*/
+				>;
+		interrupt-parent = < &ipic >;
+		interrupts = <0x42 0x8>;
+		bus-range = <0x0 0x0>;
+		ranges = <0x02000000 0x0 0x90000000 0x90000000 0x0 0x10000000
+			  0x42000000 0x0 0x80000000 0x80000000 0x0 0x10000000
+			  0x01000000 0x0 0x00000000 0xe0300000 0x0 0x00100000>;
+		clock-frequency = <0>;
+		#interrupt-cells = <1>;
+		#size-cells = <2>;
+		#address-cells = <3>;
+		reg = <0xe0008500 0x100>;
+		compatible = "fsl,mpc8349-pci";
+		device_type = "pci";
+	};
+
+};

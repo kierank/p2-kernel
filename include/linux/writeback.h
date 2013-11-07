@@ -64,6 +64,10 @@ struct writeback_control {
 	unsigned range_cyclic:1;	/* range_start is cyclic */
 	unsigned more_io:1;		/* more io to be dispatched */
 	unsigned range_cont:1;
+
+#if defined(CONFIG_RTCTRL) /* Added by Panasonic for delayproc */
+	unsigned for_delayproc:1;	/* A delayproc writeback */
+#endif /* CONFIG_RTCTRL */
 };
 
 /*

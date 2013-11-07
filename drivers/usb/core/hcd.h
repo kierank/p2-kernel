@@ -15,7 +15,10 @@
  * along with this program; if not, write to the Free Software Foundation,
  * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* $Id: hcd.h 10437 2010-11-16 04:21:19Z Noguchi Isao $ */
 
+#ifndef __USB_CORE_HCD_H
+#define __USB_CORE_HCD_H
 
 #ifdef __KERNEL__
 
@@ -109,6 +112,23 @@ struct usb_hcd {
 	u64			rsrc_len;	/* memory/io resource length */
 	unsigned		power_budget;	/* in mA, 0 = no limit */
 
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic ---> */
+
+	/* bandwidth_mutex should be taken before adding or removing
+	 * any new bus bandwidth constraints:
+	 *   1. Before adding a configuration for a new device.
+	 *   2. Before removing the configuration to put the device into
+	 *      the addressed state.
+	 *   3. Before selecting a different configuration.
+	 *   4. Before selecting an alternate interface setting.
+	 *
+	 * bandwidth_mutex should be dropped after a successful control message
+	 * to the device, or resetting the bandwidth after a failed attempt.
+	 */
+	struct mutex		bandwidth_mutex;
+
+/* <--- 2010/7/12, back-porting from 2.6.33 by Panasonic */
+
 #define HCD_BUFFER_POOLS	4
 	struct dma_pool		*pool [HCD_BUFFER_POOLS];
 
@@ -171,6 +191,8 @@ struct hc_driver {
 #define	HCD_LOCAL_MEM	0x0002		/* HC needs local memory */
 #define	HCD_USB11	0x0010		/* USB 1.1 */
 #define	HCD_USB2	0x0020		/* USB 2.0 */
+#define	HCD_USB3	0x0040		/* USB 3.0 */
+#define	HCD_MASK	0x0070
 
 	/* called to init HCD and root hub */
 	int	(*reset) (struct usb_hcd *hcd);
@@ -180,10 +202,10 @@ struct hc_driver {
 	 * a whole, not just the root hub; they're for PCI bus glue.
 	 */
 	/* called after suspending the hub, before entering D3 etc */
-	int	(*pci_suspend) (struct usb_hcd *hcd, pm_message_t message);
+	int	(*pci_suspend)(struct usb_hcd *hcd);
 
 	/* called after entering D0 (etc), before resuming the hub */
-	int	(*pci_resume) (struct usb_hcd *hcd);
+	int	(*pci_resume)(struct usb_hcd *hcd, bool hibernated);
 
 	/* cleanly make HCD stop writing memory and doing I/O */
 	void	(*stop) (struct usb_hcd *hcd);
@@ -204,6 +226,11 @@ struct hc_driver {
 	void 	(*endpoint_disable)(struct usb_hcd *hcd,
 			struct usb_host_endpoint *ep);
 
+	/* (optional) reset any endpoint state such as sequence number
+	   and current window */
+	void 	(*endpoint_reset)(struct usb_hcd *hcd,
+			struct usb_host_endpoint *ep);
+
 	/* root hub support */
 	int	(*hub_status_data) (struct usb_hcd *hcd, char *buf);
 	int	(*hub_control) (struct usb_hcd *hcd,
@@ -213,10 +240,68 @@ struct hc_driver {
 	int	(*bus_resume)(struct usb_hcd *);
 	int	(*start_port_reset)(struct usb_hcd *, unsigned port_num);
 
+    /* 2010/10/18, added by Panasonic (SAV) */
+	int (*hub_virtual_portnum)(struct usb_hcd *hcd, unsigned portnum);
+
 		/* force handover of high-speed port to full-speed companion */
 	void	(*relinquish_port)(struct usb_hcd *, int);
 		/* has a port been handed over to a companion? */
 	int	(*port_handed_over)(struct usb_hcd *, int);
+
+		/* CLEAR_TT_BUFFER completion callback */
+	void	(*clear_tt_buffer_complete)(struct usb_hcd *,
+				struct usb_host_endpoint *);
+
+	/* xHCI specific functions */
+		/* Called by usb_alloc_dev to alloc HC device structures */
+	int	(*alloc_dev)(struct usb_hcd *, struct usb_device *);
+		/* Called by usb_release_dev to free HC device structures */
+	void	(*free_dev)(struct usb_hcd *, struct usb_device *);
+
+	/* Bandwidth computation functions */
+	/* Note that add_endpoint() can only be called once per endpoint before
+	 * check_bandwidth() or reset_bandwidth() must be called.
+	 * drop_endpoint() can only be called once per endpoint also.
+	 * A call to xhci_drop_endpoint() followed by a call to xhci_add_endpoint() will
+	 * add the endpoint to the schedule with possibly new parameters denoted by a
+	 * different endpoint descriptor in usb_host_endpoint.
+	 * A call to xhci_add_endpoint() followed by a call to xhci_drop_endpoint() is
+	 * not allowed.
+	 */
+		/* Allocate endpoint resources and add them to a new schedule */
+	int 	(*add_endpoint)(struct usb_hcd *, struct usb_device *, struct usb_host_endpoint *);
+		/* Drop an endpoint from a new schedule */
+	int 	(*drop_endpoint)(struct usb_hcd *, struct usb_device *, struct usb_host_endpoint *);
+		/* Check that a new hardware configuration, set using
+		 * endpoint_enable and endpoint_disable, does not exceed bus
+		 * bandwidth.  This must be called before any set configuration
+		 * or set interface requests are sent to the device.
+		 */
+	int	(*check_bandwidth)(struct usb_hcd *, struct usb_device *);
+		/* Reset the device schedule to the last known good schedule,
+		 * which was set from a previous successful call to
+		 * check_bandwidth().  This reverts any add_endpoint() and
+		 * drop_endpoint() calls since that last successful call.
+		 * Used for when a check_bandwidth() call fails due to resource
+		 * or bandwidth constraints.
+		 */
+	void	(*reset_bandwidth)(struct usb_hcd *, struct usb_device *);
+		/* Returns the hardware-chosen device address */
+	int	(*address_device)(struct usb_hcd *, struct usb_device *udev);
+
+/* 2010/7/12, back-porting from 2.6.33 by Panasonic ---> */
+        /* Notifies the HCD after a hub descriptor is fetched.
+         * Will block.
+         */
+    int (*update_hub_device)(struct usb_hcd *, struct usb_device *hdev, 
+                             struct usb_tt *tt, gfp_t mem_flags); 
+/* <--- 2010/7/12, back-porting from 2.6.33 by Panasonic */
+
+#ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT
+    /* ULPI i/f */
+    u8 (*ulpi_read)(struct usb_hcd *hcd, const u8 port, const u8 addr);
+    void (*ulpi_write)(struct usb_hcd *hcd, const u8 port, const u8 addr, const u8 val);
+#endif  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT */
 };
 
 extern int usb_hcd_link_urb_to_ep(struct usb_hcd *hcd, struct urb *urb);
@@ -232,7 +317,19 @@ extern void usb_hcd_flush_endpoint(struct usb_device *udev,
 		struct usb_host_endpoint *ep);
 extern void usb_hcd_disable_endpoint(struct usb_device *udev,
 		struct usb_host_endpoint *ep);
+extern void usb_hcd_reset_endpoint(struct usb_device *udev,
+		struct usb_host_endpoint *ep);
 extern void usb_hcd_synchronize_unlinks(struct usb_device *udev);
+#if 0
+extern int usb_hcd_check_bandwidth(struct usb_device *udev,
+		struct usb_host_config *new_config,
+		struct usb_interface *new_intf);
+#else/* 2010/7/14, back-porting from 2.6.33 by Panasonic */
+extern int usb_hcd_alloc_bandwidth(struct usb_device *udev,
+		struct usb_host_config *new_config,
+		struct usb_host_interface *old_alt,
+		struct usb_host_interface *new_alt);
+#endif
 extern int usb_hcd_get_frame_number(struct usb_device *udev);
 
 extern struct usb_hcd *usb_create_hcd(const struct hc_driver *driver,
@@ -252,14 +349,11 @@ struct pci_device_id;
 extern int usb_hcd_pci_probe(struct pci_dev *dev,
 				const struct pci_device_id *id);
 extern void usb_hcd_pci_remove(struct pci_dev *dev);
-
-#ifdef CONFIG_PM
-extern int usb_hcd_pci_suspend(struct pci_dev *dev, pm_message_t state);
-extern int usb_hcd_pci_resume(struct pci_dev *dev);
-#endif /* CONFIG_PM */
-
 extern void usb_hcd_pci_shutdown(struct pci_dev *dev);
 
+#ifdef CONFIG_PM_SLEEP
+extern struct dev_pm_ops	usb_hcd_pci_pm_ops;
+#endif
 #endif /* CONFIG_PCI */
 
 /* pci-ish (pdev null is ok) buffer alloc/mapping support */
@@ -276,6 +370,13 @@ extern irqreturn_t usb_hcd_irq(int irq, void *__hcd);
 
 extern void usb_hc_died(struct usb_hcd *hcd);
 extern void usb_hcd_poll_rh_status(struct usb_hcd *hcd);
+
+/* The D0/D1 toggle bits ... USE WITH CAUTION (they're almost hcd-internal) */
+#define usb_gettoggle(dev, ep, out) (((dev)->toggle[out] >> (ep)) & 1)
+#define	usb_dotoggle(dev, ep, out)  ((dev)->toggle[out] ^= (1 << (ep)))
+#define usb_settoggle(dev, ep, out, bit) \
+		((dev)->toggle[out] = ((dev)->toggle[out] & ~(1 << (ep))) | \
+		 ((bit) << (ep)))
 
 /* -------------------------------------------------------------------------- */
 
@@ -386,8 +487,8 @@ extern int usb_find_interface_driver(struct usb_device *dev,
 #ifdef CONFIG_PM
 extern void usb_hcd_resume_root_hub(struct usb_hcd *hcd);
 extern void usb_root_hub_lost_power(struct usb_device *rhdev);
-extern int hcd_bus_suspend(struct usb_device *rhdev);
-extern int hcd_bus_resume(struct usb_device *rhdev);
+extern int hcd_bus_suspend(struct usb_device *rhdev, pm_message_t msg);
+extern int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg);
 #else
 static inline void usb_hcd_resume_root_hub(struct usb_hcd *hcd)
 {
@@ -419,7 +520,7 @@ static inline void usbfs_cleanup(void) { }
 
 /*-------------------------------------------------------------------------*/
 
-#if defined(CONFIG_USB_MON)
+#if defined(CONFIG_USB_MON) || defined(CONFIG_USB_MON_MODULE)
 
 struct usb_mon_operations {
 	void (*urb_submit)(struct usb_bus *bus, struct urb *urb);
@@ -461,7 +562,7 @@ static inline void usbmon_urb_submit_error(struct usb_bus *bus, struct urb *urb,
 static inline void usbmon_urb_complete(struct usb_bus *bus, struct urb *urb,
 		int status) {}
 
-#endif /* CONFIG_USB_MON */
+#endif /* CONFIG_USB_MON || CONFIG_USB_MON_MODULE */
 
 /*-------------------------------------------------------------------------*/
 
@@ -490,3 +591,5 @@ extern struct rw_semaphore ehci_cf_port_reset_rwsem;
 extern unsigned long usb_hcds_loaded;
 
 #endif /* __KERNEL__ */
+
+#endif /* __USB_CORE_HCD_H */

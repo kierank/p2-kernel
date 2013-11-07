@@ -1,0 +1,36 @@
+# RT control driver configuration
+
+config RTCTRL
+	bool "RT control support"
+	depends on BLOCK
+	---help---
+	  This option is for RT control, RT_On/Off and delay process for
+	  Non-Realtime file.
+
+	  If unsure, say Y.
+
+config RTCTRLDRV
+	tristate "RT control driver"
+	depends on RTCTRL
+	---help---
+	  This driver is for RT control.
+	  Use char-major-252-minor-$(MAJOR) device files: /dev/rtctrl_$(MAJOR),
+	  $(MAJOR) is a number of driver you want to control RT_On/Off.
+
+	  If unsure, say Y.
+
+config DELAYPROC
+	bool "Delay write process support"
+	depends on RTCTRL
+	---help---
+	  This option is for delay write process for new P2 card.
+
+	  If unsure, say N.
+
+config DELAYPROC_WRITE_ORDER
+	bool "Delay write order support"
+	depends on DELAYPROC
+	---help---
+	  This option is defined the order of delayproc writing.
+
+	  If unsure, say N.

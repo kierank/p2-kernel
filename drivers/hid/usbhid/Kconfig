@@ -1,3 +1,5 @@
+## $Id: Kconfig 11198 2010-12-15 23:33:40Z Noguchi Isao $
+
 comment "USB Input Devices"
 	depends on USB
 
@@ -23,6 +25,70 @@ config USB_HID
 
 comment "Input core support is needed for USB HID input layer or HIDBP support"
 	depends on USB_HID && INPUT=n
+
+
+## 2010/12/15, added by Panasonic (SAV) --->
+
+menuconfig USB_HID_EXTENSION
+	bool "*** USB HID device optional extension"
+	depends on USB_HID
+    default n
+    help
+	  Say Y here in order to enable optional USB HID device
+	  extension setting
+
+if USB_HID_EXTENSION
+
+config USB_HID_RESTRICT_ROUTING
+    bool "Enabled restriction of routing to hid device"
+    default n
+    select USB_RESTRICT_ROUTING
+    help
+	  Say Y here in order to enable restriction routing to hid
+	  device
+
+choice
+    prompt "Which the case to ignore the hid device ?"
+    depends on USB_HID_RESTRICT_ROUTING
+    default USB_HID_RESTRICT_WHEN_NOT_MEET
+
+config USB_HID_RESTRICT_WHEN_MEET
+    bool "routing condition is met"
+
+config USB_HID_RESTRICT_WHEN_NOT_MEET
+    bool "routing condition is NOT met"
+
+endchoice
+
+config USB_HID_RESTRICT_BUSNUM
+    int "bus number"
+    depends on USB_HID_RESTRICT_ROUTING
+    default 0
+
+config USB_HID_RESTRICT_ROOTPORT
+    int "port number of root hub"
+    depends on USB_HID_RESTRICT_ROUTING
+    depends on USB_HID_RESTRICT_BUSNUM!=0
+    default 0
+
+config USB_HID_RESTRICT_SS_ROOTPORT
+    int "SuperSpeed port number of root hub"
+    depends on USB_HID_RESTRICT_ROUTING
+    depends on USB_HID_RESTRICT_BUSNUM!=0
+    default 0
+
+config USB_HID_RESTRICT_ROUTE_STRING
+    hex "route string value"
+    depends on USB_HID_RESTRICT_ROUTING
+    depends on USB_HID_RESTRICT_BUSNUM!=0
+    depends on USB_HID_RESTRICT_ROOTPORT!=0 || USB_HID_RESTRICT_SS_ROOTPORT!=0
+    default 0x00000000
+    
+
+endif # USB_HID_EXTENSION
+
+## <--- 2010/12/15, added by Panasonic (SAV)
+
 
 config USB_HIDINPUT_POWERBOOK
 	bool "Enable support for Apple laptop/aluminum USB special keys"

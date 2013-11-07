@@ -1,0 +1,423 @@
+/*
+ * MPC8315E RDB Device Tree Source
+ *
+ * Copyright (C) 2007-2008 Freescale Semiconductor Inc. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; either version 2 of the License, or (at your
+ * option) any later version.
+ */
+
+/ {
+	model = "MPC8315ERDB";
+	compatible = "fsl,mpc8315erdb", "MPC831xRDB", "MPC83xxRDB";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		PowerPC,8315@0 {
+			device_type = "cpu";
+			reg = <0>;
+			d-cache-line-size = <20>;	// 32 bytes
+			i-cache-line-size = <20>;	// 32 bytes
+			d-cache-size = <4000>;		// L1, 16K
+			i-cache-size = <4000>;		// L1, 16K
+			timebase-frequency = <0>;	// from bootloader
+			bus-frequency = <0>;		// from bootloader
+			clock-frequency = <0>;		// from bootloader
+			32-bit;
+		};
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <00000000 08000000>;	// 128MB at 0
+	};
+
+	localbus@e0005000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "fsl,mpc8315-elbc",
+					"fsl,elbc", "simple-bus";
+			reg = <e0005000 1000>;
+			interrupts = <4d 8>;
+			interrupt-parent = < &ipic >;
+
+		nor@fe000000 {
+			device_type = "rom";
+			compatible = "direct-mapped";
+			reg = <fe000000 00800000>; /*8MB*/
+			probe-type = "CFI";
+			bank-width = <2>;
+			partitions = <
+				00000000 00100001 /* U-BOOT 1M R0 */
+				00100000 00400000 /* File system 4M RW */
+				00500000 00200001 /* Kernel 2M RO */
+				00700000 00100001>;/* DTB 1M RO */
+			partition-names = "U-Boot", "FileSystem",
+						"Kernel", "DTB";
+		};
+
+		nand@e0600000 {
+			device_type = "nand";
+			compatible = "fsl,mpc8315-fcm-nand",
+					"fsl,elbc-fcm-nand";
+			reg = <e0600000 2000>;
+			u-boot@0 {
+				reg = <0 100000>;
+				read-only;
+				label = "U-Boot-NAND";
+			};
+			jffs2@100000 {
+				reg = <100000 800000>;
+				label = "JFFS2-NAND";
+			};
+			ramdisk@900000 {
+				reg = <900000 400000>;
+				label = "Ramdisk-NAND";
+			};
+			reserved@d00000 {
+				reg = <d00000 1000000>;
+				label = "Reserved-NAND";
+			};
+			kernel@1d00000 {
+				reg = <1d00000 200000>;
+				read-only;
+				label = "Kernel-NAND";
+			};
+			dtb@1f00000 {
+				reg = <1f00000 100000>;
+				read-only;
+				label = "DTB-NAND";
+			};
+		};
+	};
+	soc8315@e0000000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		#interrupt-cells = <2>;
+		device_type = "soc";
+		ranges = <0 e0000000 00100000>;
+		reg = <e0000000 00000200>;
+		bus-frequency = <0>;
+
+		wdt@200 {
+			device_type = "watchdog";
+			compatible = "mpc83xx_wdt";
+			reg = <200 100>;
+		};
+
+		i2c@3000 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			device_type = "i2c";
+			compatible = "fsl-i2c";
+			reg = <3000 100>;
+			interrupts = <e 8>;
+			interrupt-parent = < &ipic >;
+			dfsrr;
+			rtc@68 {
+				device_type = "rtc";
+				compatible = "dallas,ds1339";
+				reg = <68>;
+			};
+		};
+
+		spi@7000 {
+			device_type = "spi";
+			compatible = "fsl_spi";
+			reg = <7000 1000>;
+			interrupts = <10 8>;
+			interrupt-parent = < &ipic >;
+			mode = "cpu";
+		};
+
+		/* phy type (ULPI, UTMI, UTMI_WIDE, SERIAL) */
+		usb@23000 {
+			device_type = "usb";
+			compatible = "fsl-usb2-dr";
+			reg = <23000 1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			interrupt-parent = < &ipic >;
+			interrupts = <26 8>;
+			/*dr_mode = "otg";*/
+			phy_type = "utmi";
+			sleep = <b00 00c00000>;
+		};
+
+		mdio@24520 {
+			device_type = "mdio";
+			compatible = "gianfar";
+			reg = <24520 20>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			phy0: ethernet-phy@0 {
+				interrupt-parent = < &ipic >;
+				interrupts = <14 8>;
+				reg = <0>;
+				device_type = "ethernet-phy";
+			};
+			phy1: ethernet-phy@1 {
+				interrupt-parent = < &ipic >;
+				interrupts = <13 8>;
+				reg = <1>;
+				device_type = "ethernet-phy";
+			};
+		};
+
+		ptp_timer: ptimer@24e00 {
+			compatible = "fsl,gianfar-ptp-timer";
+			reg = <24e00 b0>;
+		};
+
+		ethernet@24000 {
+			device_type = "network";
+			model = "eTSEC";
+			compatible = "gianfar";
+			reg = <24000 1000>;
+			ptimer-handle = < &ptp_timer >;
+			address = [ 00 00 00 00 00 00 ];
+			local-mac-address = [ 00 00 00 00 00 00 ];
+			interrupts = <20 8 21 8 22 8>;
+			interrupt-parent = < &ipic >;
+			phy-handle = < &phy0 >;
+			sleep = <b00 c0000000>;
+			fsl,magic-packet;
+		};
+
+		ethernet@25000 {
+			device_type = "network";
+			model = "eTSEC";
+			compatible = "gianfar";
+			reg = <25000 1000>;
+			ptimer-handle = < &ptp_timer >;
+			address = [ 00 00 00 00 00 00 ];
+			local-mac-address = [ 00 00 00 00 00 00 ];
+			interrupts = <23 8 24 8 25 8>;
+			interrupt-parent = < &ipic >;
+			phy-handle = < &phy1 >;
+			sleep = <b00 30000000>;
+			fsl,magic-packet;
+		};
+
+		serial@4500 {
+			device_type = "serial";
+			compatible = "ns16550";
+			reg = <4500 100>;
+			clock-frequency = <0>;
+			interrupts = <9 8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		serial@4600 {
+			device_type = "serial";
+			compatible = "ns16550";
+			reg = <4600 100>;
+			clock-frequency = <0>;
+			interrupts = <a 8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		serdes@e3000 {
+			model = "SerDes";
+			compatible = "fsl,serdes";
+			reg = <e3000 100>;
+			vdd-1v;
+			pex-x1;
+			protocol = "pex";
+			clock = <d#100>;
+		};
+
+		/* SATA 1*/
+		sata@18000 {
+			compatible = "fsl,mpc8315-sata";
+			reg = <18000 1000>;
+			interrupts = <2c 8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		/* SATA 2*/
+		sata@19000 {
+			compatible = "fsl,mpc8315-sata";
+			reg = <19000 1000>;
+			interrupts = <2d 8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		tdm@16000 {
+			device_type = "tdm";
+			compatible = "fsl,mpc8315-tdm";
+			reg = <16000 200 2c000 2000>;
+			clock-frequency = <0>;
+			interrupts = <53 8 5e 8 3 8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		legerity {
+			device_type="slic";
+			compatible = "legerity-slic";
+			clock-frequency = <0>;
+			interrupts = <16 8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		gpio@c00 {
+			device_type = "gpio";
+			compatible = "fsl,mpc8315-gpio";
+			reg = <c00 18>;
+			interrupt-parent = < &ipic >;
+		};
+
+		crypto@30000 {
+			device_type = "crypto";
+			model = "SEC2";
+			compatible = "talitos";
+			reg = <30000 10000>;
+			interrupts = <b 8>;
+			interrupt-parent = < &ipic >;
+			/* Rev. 2.2 */
+			num-channels = <4>;
+			channel-fifo-len = <18>;
+			exec-units-mask = <0000097c>;
+			descriptor-types-mask = <03a30abf>;
+		};
+
+		/* IPIC
+		 * interrupts cell = <intr #, sense>
+		 * sense values match linux IORESOURCE_IRQ_* defines:
+		 * sense == 8: Level, low assertion
+		 * sense == 2: Edge, high-to-low change
+		 */
+		ipic: pic@700 {
+			interrupt-controller;
+			#address-cells = <0>;
+			#interrupt-cells = <2>;
+			reg = <700 100>;
+			built-in;
+			device_type = "ipic";
+		};
+
+		ipic-msi@7c0 {
+			compatible = "fsl,IPIC-MSI";
+			reg = <7c0 40>;
+			msi-available-ranges = <0 100>;
+			interrupts = < 43 8
+				       4  8
+				       51 8
+				       52 8
+				       56 8
+				       57 8
+				       58 8
+				       59 8 >;
+			interrupt-parent = < &ipic >;
+		};
+
+		power@b00 {
+			linux,phandle = <b00>;
+			device_type = "power";
+			compatible = "fsl,mpc831x-pmc", "fsl,mpc83xx-pmc";
+			reg = <b00 100
+				a00 100>;
+			interrupts = <50 8>;
+			interrupt-parent = < &ipic>;
+		};
+
+		timer@500 {
+			linux,phandle = <500>;
+			device_type = "timer";
+			compatible = "fsl,mpc831x-gtm", "fsl,mpc83xx-gtm";
+			reg = <500 100>;
+			interrupts = <48 8>;
+			interrupt-parent = < &ipic>;
+		};
+	};
+
+	pci@e0008500 {
+		interrupt-map-mask = <f800 0 0 7>;
+		interrupt-map = <
+
+				/* IDSEL 0x0E -mini PCI */
+				 7000 0 0 1 &ipic 12 8
+				 7000 0 0 2 &ipic 12 8
+				 7000 0 0 3 &ipic 12 8
+				 7000 0 0 4 &ipic 12 8
+
+				/* IDSEL 0x0F -mini PCI */
+				 7800 0 0 1 &ipic 11 8
+				 7800 0 0 2 &ipic 11 8
+				 7800 0 0 3 &ipic 11 8
+				 7800 0 0 4 &ipic 11 8
+
+				/* IDSEL 0x10 - PCI slot */
+				 8000 0 0 1 &ipic 30 8
+				 8000 0 0 2 &ipic 11 8
+				 8000 0 0 3 &ipic 30 8
+				 8000 0 0 4 &ipic 11 8>;
+		interrupt-parent = < &ipic >;
+		interrupts = <42 8>;
+		bus-range = <0 0>;
+		ranges = <02000000 0 90000000 90000000 0 10000000
+			  42000000 0 80000000 80000000 0 10000000
+			  01000000 0 00000000 e0300000 0 00100000>;
+		clock-frequency = <3f940aa>;
+		#interrupt-cells = <1>;
+		#size-cells = <2>;
+		#address-cells = <3>;
+		reg = <e0008500 100>;
+		compatible = "fsl,mpc8349-pci";
+		device_type = "pci";
+	};
+
+	/* PCI Express 1*/
+	pci@e0009000 {
+		interrupt-map-mask = <f800 0 0 7>;
+		interrupt-map = <
+				 0000 0 0 1 &ipic 1 8
+				 0000 0 0 2 &ipic 1 8
+				 0000 0 0 3 &ipic 1 8
+				 0000 0 0 4 &ipic 1 8
+				 >;
+		interrupt-parent = < &ipic >;
+		interrupts = <1 8>;
+		bus-range = <0 0>;
+		ranges = <02000000 0 A0000000 A0000000 0 10000000
+			  01000000 0 00000000 B1000000 0 00800000>;
+		clock-frequency = <0>;
+		#interrupt-cells = <1>;
+		#size-cells = <2>;
+		#address-cells = <3>;
+		reg = <e0009000 00001000
+		       b0000000 01000000>;
+		compatible = "fsl,mpc8315-pcie";
+		device_type = "pci";
+	};
+
+	/* PCI Express 2*/
+	pci@e000a000 {
+		interrupt-map-mask = <f800 0 0 7>;
+		interrupt-map = <
+				 0000 0 0 1 &ipic 2 8
+				 0000 0 0 2 &ipic 2 8
+				 0000 0 0 3 &ipic 2 8
+				 0000 0 0 4 &ipic 2 8
+				 >;
+		interrupt-parent = < &ipic >;
+		interrupts = <2 8>;
+		bus-range = <0 0>;
+		ranges = <02000000 0 C0000000 C0000000 0 10000000
+			  01000000 0 00000000 D1000000 0 00800000>;
+		clock-frequency = <0>;
+		#interrupt-cells = <1>;
+		#size-cells = <2>;
+		#address-cells = <3>;
+		reg = <e000a000 00001000
+		       d0000000 01000000>;
+		compatible = "fsl,mpc8315-pcie";
+		device_type = "pci";
+	};
+};

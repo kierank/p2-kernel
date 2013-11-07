@@ -1,0 +1,673 @@
+/*
+ * AJ-HPX600(K318) Device Tree Source
+ *
+ * Copyright 2005, 2006, 2007 Freescale Semiconductor Inc.
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
+ */
+/* $Id: K318_0_default.dts 21074 2012-04-24 08:39:51Z Yoshioka Masaki $ */
+
+/dts-v1/;
+
+/ {
+	model = "MPC8313ERDB";
+	compatible = "MPC8313ERDB", "MPC831xRDB", "MPC83xxRDB";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	aliases {
+		ethernet0 = &enet0;
+		ethernet1 = &enet1;
+		serial0 = &serial0;
+		serial1 = &serial1;
+		pci0 = &pci0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		PowerPC,8313@0 {
+			device_type = "cpu";
+			reg = <0x0>;
+			d-cache-line-size = <0x20>;	// 32 bytes
+			i-cache-line-size = <0x20>;	// 32 bytes
+			d-cache-size = <0x4000>;	// L1, 16K
+			i-cache-size = <0x4000>;	// L1, 16K
+			timebase-frequency = <0>;	// from bootloader
+			bus-frequency = <0>;		// from bootloader
+			clock-frequency = <0>;		// from bootloader
+		};
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0x00000000 0x10000000>;	// 256MB at 0
+	};
+
+	localbus@e0005000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "fsl,mpc8313-elbc", "fsl,elbc", "simple-bus";
+		reg = <0xe0005000 0x1000>;
+		interrupts = <77 0x8>;
+		interrupt-parent = <&ipic>;
+
+		flash0: flash@f0000000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			device_type = "rom";
+			compatible = "cfi-flash";
+			ranges = <0x0 0xf0000000 0x04000000>;
+			reg = <0xf0000000 0x04000000>; /* CS0: 64MB */
+			probe-type = "CFI";
+			bank-width = <2>;
+			device-width = <2>;
+            boot1st@0 {
+                reg = <0x0 0x40000>;
+                label = "HRCW+1stBoot";
+            };
+            boot2nd@40000 {
+                reg = <0x40000 0x80000>;
+				label = "2ndBoot1";
+            };
+            boot2nd@C0000 {
+                reg = <0xC0000 0x80000>;
+				label = "2ndBoot2";
+            };
+            ubootenv@140000 {
+                reg = <0x140000 0x40000>;
+				label = "uboot_env";
+            };
+            dm@180000 {
+                reg = <0x180000 0x500000>;
+                label = "DM-FPGA#1";
+            };
+            dm@680000 {
+                reg = <0x680000 0x500000>;
+                label = "DM-FPGA#2";
+            };
+            backup@B80000 {
+                reg = <0xB80000 0x800000>;
+                label = "backup1";
+            };
+            backup@1380000 {
+                reg = <0x1380000 0x800000>;
+                label = "backup2";
+            };
+            vup_kernel@1B80000 {
+                reg = <0x1B80000 0x200000>;
+                label = "vup kernel";
+            };
+            vup_rootfs@1D80000 {
+                reg = <0x1D80000 0x400000>;
+                label = "vup rootfs";
+            };
+            kernel@2180000 {
+                reg = <0x2180000 0x400000>;
+                label = "kernel";
+            };
+            rootfs@2580000 {
+                reg = <0x2580000 0x1A80000>;
+                label = "rootfs+App";
+            };
+		};
+
+        dmfpga: fpga@e8000000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			device_type = "fpga";
+			compatible = "p2pf,fpga";
+			ranges = <0x0 0xe8000000 0x8000>; // CS1
+
+            /* PIO-1 */
+            fpga_pio1: gpio@00 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x00 0x01>;
+                base = <32>; // gpio[32-39]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+/*
+                    0   1   1   // VUP_MODE_N
+                    1   1   0   // TV_SYSTEM
+                    4   1   1   // UP_RST_N
+                    5   1   1   // SYS_W
+*/
+                    6   1   1   // CAM_RST_N
+                    7   1   1   // CAM_W
+                >;
+                mask-pins = < 2 3 >;
+                gpio-controller;
+            };
+
+            /* PIO-2 */
+            fpga_pio2: gpio@01 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x01 0x01>;
+                base = <40>; // gpio[40-47]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+/*
+                    0   1   0   // VUP_STS_BLINK
+                    1   1   0   // VUP_STS_ERROR
+                    2   1   0   // VUP_STS_FINISH
+                    3   1   0   // VUP_STS_BIGIN
+                    4   1   1   // CAM_CE
+                    5   0   0   // CAM_CONF_DONE
+                    6   1   0   // PQ2_SPISEL
+*/
+                    7   1   1   // PQ2_SPICS_N
+                >;
+                mask-pins = <  >;
+                gpio-controller;
+            };
+
+            /* PIO-3 */
+            fpga_pio3: gpio@02 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x02 0x01>;
+                base = <48>; // gpio[48-55]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+                    0   0   0   // LOTSW[15]
+                    1   0   0   // LOTSW[14]
+                    2   0   0   // LOTSW[13]
+                    3   0   0   // LOTSW[12]
+                    4   0   0   // LOTSW[11]
+                    5   0   0   // LOTSW[10]
+                    6   0   0   // LOTSW[9]
+                    7   0   0   // LOTSW[8]
+                >;
+                // mask-pins = <  >;
+                gpio-controller;
+            };
+
+            /* PIO-4 */
+            fpga_pio4: gpio@03 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x03 0x01>;
+                base = <56>; // gpio[56-63]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+                    0   0   0   // LOTSW[7]
+                    1   0   0   // LOTSW[6]
+                    2   0   0   // LOTSW[5]
+                    3   0   0   // LOTSW[4]
+                    4   0   0   // LOTSW[3]
+                    5   0   0   // LOTSW[2]
+                    6   0   0   // LOTSW[1]
+                    7   0   0   // LOTSW[0]
+                >;
+                // mask-pins = <  >;
+                gpio-controller;
+            };
+
+            /* PIO-5 */
+            fpga_pio5: gpio@04 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x04 0x01>;
+                base = <64>; // gpio[64-71]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+                    1   0   0   // PC_MODE[2]
+                    2   0   0   // PC_MODE[1]
+                    3   0   0   // PC_MODE[0]
+                    5   0   0   // PCB_VER[1]
+                    6   0   0   // PCB_VER[0]
+                    7   0   0   // ZION_RDY
+                >;
+                mask-pins = < 0 4 >;
+                gpio-controller;
+            };
+
+            /* PIO-6 */
+            fpga_pio6: gpio@05 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x05 0x01>;
+                base = <72>; // gpio[72-79]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+/*
+                    3   1   0   // PXY_DSP_TGTRST
+                    7   1   1   // RST_RICOH_N
+*/
+                >;
+                mask-pins = < 0 1 2 4 5 6 >;
+                gpio-controller;
+            };
+
+            /* PIO-7 */
+            fpga_pio7: gpio@06 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x06 0x01>;
+                base = <80>; // gpio[80-87]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+                    1   0   0   // PXY_DETECT_N
+                    2   0   0   // EVF_DETECT_N
+                    3   0   0   // SDI_DETECT_N
+/*
+                    4   1   0   // PXY_DSP
+                    5   1   0   // PXY_FPGA
+                    6   1   0   // EVF_SPI
+                    7   1   0   // SDI_SPI
+*/
+                >;
+                mask-pins = < 0 >;
+                gpio-controller;
+            };
+
+            /* PIO-8 */
+            fpga_pio8: gpio@07 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x07 0x01>;
+                base = <88>; // gpio[88-95]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+/*
+                    4   0   0   // TDO
+                    5   1   0   // TDI
+                    6   1   0   // TMS
+                    7   1   0   // TCK
+*/
+                >;
+                mask-pins = < 0 1 2 3 >;
+                gpio-controller;
+            };
+
+            /* PIO-9 */
+            fpga_pio9: gpio@08 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x08 0x01>;
+                base = <96>; // gpio[96-103]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+/*
+                    1   0   0   // USB2_OCI_N
+                    2   0   0   // USB1_OCI_N
+                    3   1   0   // USB_VBUS2_ON_P
+                    4   1   0   // USB_VBUS1_ON_P
+                    5   1   1   // USB_HOST_N
+                    6   1   1   // USB_OE_N
+                    7   1   1   // RST_USBHUB_N
+*/
+                >;
+                mask-pins = < 0 >;
+                gpio-controller;
+            };
+
+            /* PIO-10 */
+            fpga_pio10: gpio@09 {
+                #gpio-cells = <2>;
+                device_type = "gpio";
+    			compatible = "p2pf,fpga-gpio";
+                reg = <0x09 0x01>;
+                base = <104>; // gpio[104-111]
+                pins = <8>;  // 8bit Reg. 
+                gpio-map = <
+                /*
+                 *  *** port setting and infos  ***
+                 *  pin : pin number
+                 *  dir : dirction (0:IN, 1:OUT)
+                 *  dat : data value (when dir==1(OUT); 0:'L', 1:'H')
+                 */
+                /* pin dir dat */
+                    0   1   0   // SD_LED
+                    2   0   0   // DIPSW4_N
+                    3   0   0   // DIPSW3_N
+                    4   1   0   // LED[3]
+                    5   1   0   // LED[2]
+                    6   1   0   // LED[1]
+                    7   1   0   // LED[0]
+                >;
+                mask-pins = < 1 >;
+                gpio-controller;
+            };
+
+        };
+
+	};
+
+	immr@e0000000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		#interrupt-cells = <2>;
+		device_type = "soc";
+		compatible = "simple-bus","fsl,mpc8313-immr";
+		ranges = <0x0 0xe0000000 0x00100000>;
+		reg = <0xe0000000 0x00000200>;
+		bus-frequency = <0>;
+
+		wdt@200 {
+			device_type = "watchdog";
+			compatible = "mpc83xx_wdt";
+			reg = <0x200 0x100>;
+		};
+
+        gpio0: gpio@C00 {
+			#gpio-cells = <2>;
+            device_type = "gpio";
+			compatible = "fsl,mpc83xx-gpio";
+			reg = <0xc00 0x100>;
+			interrupts = <74 0x8>;
+			interrupt-parent = <&ipic>;
+			base = <0>;     // gpio[0-31]
+            pins = <32>;    // 32bit
+            gpio-map = <
+            /*
+             *  *** register setting  ***
+             *  pin : pin number
+             *  dir : dirction (0:IN, 1:OUT)
+             *  odr : open drain output (0:disable, 1:enable)
+             *  dat : data latch value (0:'L', 1:'H')
+             *  icr : IRQ control (0:any change trigger, 1: down edge only)
+             */
+            /* pin dir odr dat icr */
+               16   0   0   1   0       // dipsw[2]
+               31   0   0   1   0       // dipsw[1]
+            >;
+            mask-pins = < 0 1 2 3 4 5 6 7 8 9 12 13 14
+                          17 18 19 20 21 22 23 24 25 26 27 28 29 30>;
+ 			gpio-controller;
+        };
+
+		dma@8000 { /* Added by Panasonic */
+			device_type = "dma";
+			compatible = "fsl-dma";
+			reg = <0x8000 0x300>;
+			interrupts = <71 0x8>;
+			interrupt-parent = < &ipic >;
+		};
+
+		spi@7000 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			device_type = "spi";
+			compatible = "fsl,spi","fsl,mpc831x-spi";
+			reg = <0x7000 0x1000>;
+			interrupts = <0x10 0x8>;
+			interrupt-parent = < &ipic >;
+			mode = "cpu";
+            // open-drain; // open-drain mode
+            gpios = <&fpga_pio2 7 0>; // CS is pin 7 of FPGA-PIO2
+
+            // Altera EPCS64 serial flash device with SPI interface
+            flash1: spi-flash@0 {
+                #address-cells = <1>;
+                #size-cells = <1>;
+                ranges = <0x0 0x00000 0x800000>;
+                device_type = "rom";
+                compatible = "spi-flash","m25p80","linux,m25p80";
+        		type = "epcs64";
+
+                reg = <0>;  // index of 'gpios' property in parent's node (spi)
+//                    spi-cpha;   // clock starts toggling at the beginning of the data transfer
+//                    spi-cpol;   // inactive state of clock is high
+//                    spi-cspol;  // active state of CS is high
+//                    spi-3wire;  // SI/SO signals shared
+                spi-max-frequency = <10000000>;  // MAX 10MHz
+
+                cam@0 {
+                   reg = <0x0 0x800000>;    // 8MB
+                   label = "CAM-FPGA";
+                };
+            };
+		};
+
+		/* phy type (ULPI, UTMI, UTMI_WIDE, SERIAL) */
+		usb@23000 {
+			device_type = "usb";
+			compatible = "fsl-usb2-dr";
+			reg = <0x23000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			interrupt-parent = <&ipic>;
+			interrupts = <38 0x8>;
+			phy_type = "utmi";          /* Modified by Panasonic */
+			phy_clk  = "24mhz";         /* Added by Panasonic */
+			dr_mode = "host";           /* Added by Panasonic */
+			max_ep_nr = <3>;            /* Added by Panasonic */
+		};
+
+		mdio@24520 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			device_type = "mdio";
+			compatible = "fsl,gianfar-mdio";
+			reg = <0x24520 0x20>;
+			phy2: ethernet-phy@2 {
+				reg = <0x2>;
+				device_type = "ethernet-phy";
+			};
+			phy3: ethernet-phy@3 {
+				reg = <0x3>;
+				device_type = "ethernet-phy";
+			};
+		};
+
+		enet0: ethernet@24000 {
+			cell-index = <0>;
+			device_type = "network";
+			model = "eTSEC";
+			compatible = "gianfar";
+			reg = <0x24000 0x1000>;
+			local-mac-address = [ 00 00 00 00 00 00 ];
+			interrupts = <32 0x8 33 0x8 34 0x8>;
+			phy-connection-type = "mii";
+			interrupt-parent = <&ipic>;
+			phy-handle = <&phy3>;
+			sleep = <0xb00 0xc0000000>;
+			fsl,magic-packet;
+		};
+
+		enet1: ethernet@25000 {
+			cell-index = <1>;
+			device_type = "network";
+			model = "eTSEC";
+			compatible = "gianfar";
+			reg = <0x25000 0x1000>;
+			local-mac-address = [ 00 00 00 00 00 00 ];
+			interrupts = <35 0x8 36 0x8 37 0x8>;
+			interrupt-parent = <&ipic>;
+			phy-handle = < &phy2 >;
+			sleep = <&pmc 0x10000000>;
+			fsl,magic-packet;
+		};
+
+		serial0: serial@4500 {
+			cell-index = <0>;
+			device_type = "serial";
+			compatible = "ns16550";
+			reg = <0x4500 0x100>;
+			clock-frequency = <0>;
+			interrupts = <9 0x8>;
+			interrupt-parent = <&ipic>;
+		};
+
+		serial1: serial@4600 {
+			cell-index = <1>;
+			device_type = "serial";
+			compatible = "ns16550";
+			reg = <0x4600 0x100>;
+			clock-frequency = <0>;
+			interrupts = <10 0x8>;
+			interrupt-parent = <&ipic>;
+		};
+
+		/* IPIC
+		 * interrupts cell = <intr #, sense>
+		 * sense values match linux IORESOURCE_IRQ_* defines:
+		 * sense == 8: Level, low assertion
+		 * sense == 2: Edge, high-to-low change
+		 */
+		ipic: pic@700 {
+			interrupt-controller;
+			#address-cells = <0>;
+			#interrupt-cells = <2>;
+			reg = <0x700 0x100>;
+			device_type = "ipic";
+		};
+
+		pmc: power@b00 {
+			compatible = "fsl,mpc8313-pmc", "fsl,mpc8349-pmc";
+			reg = <0xb00 0x100 0xa00 0x100>;
+			interrupts = <80 8>;
+			interrupt-parent = <&ipic>;
+			fsl,mpc8313-wakeup-timer = <&gtm1>;
+
+			/* Remove this (or change to "okay") if you have
+			 * a REVA3 or later board, if you apply one of the
+			 * workarounds listed in section 8.5 of the board
+			 * manual, or if you are adapting this device tree
+			 * to a different board.
+			 */
+			status = "fail";
+		};
+
+		gtm1: timer@500 {
+			compatible = "fsl,mpc8313-gtm", "fsl,gtm";
+			reg = <0x500 0x100>;
+			interrupts = <90 8 78 8 84 8 72 8>;
+			interrupt-parent = <&ipic>;
+		};
+		timer@600 {
+			compatible = "fsl,mpc8313-gtm", "fsl,gtm";
+			reg = <0x600 0x100>;
+			interrupts = <91 8 79 8 85 8 73 8>;
+			interrupt-parent = <&ipic>;
+		};
+	};
+
+	sleep-nexus {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		sleep = <&pmc 0x00010000>;
+		ranges;
+
+		pci0: pci@e0008500 {
+			cell-index = <1>;
+			interrupt-map-mask = <0xf800 0x0 0x0 0x7>;
+			interrupt-map = <
+				/* IDSEL AD17(0x11) : ZION */
+				   0x8800 0x0 0x0 0x1 &ipic 0x11 0x8 /*INTA*/
+
+				/* IDSEL AD19(0x13) : Ricoh card slot 1 */
+                   0x9800 0x0 0x0 0x1 &ipic 19 0x8     /*INTC*/
+                   0x9800 0x0 0x0 0x2 &ipic 20 0x8     /*INTD*/
+                   0x9800 0x0 0x0 0x3 &ipic 18 0x8     /*INTB*/
+
+				/* IDSEL AD20(0x14) : Ricoh card slot 2 */
+				   0xa000 0x0 0x0 0x1 &ipic 20 0x8     /*INTD*/
+				   0xa000 0x0 0x0 0x2 &ipic 18 0x8     /*INTB*/
+				   0xa000 0x0 0x0 0x3 &ipic 19 0x8     /*INTC*/
+				>;
+			interrupt-parent = <&ipic>;
+			interrupts = <66 0x8>;
+			bus-range = <0x0 0x0>;
+            ranges = <
+                    0x02000000 0x0 0x90000000 0x90000000 0x0 0x10000000 // MEMIO
+                    0x42000000 0x0 0x80000000 0x80000000 0x0 0x10000000 // PREFETCH
+                    0x01000000 0x0 0x00000000 0xe0300000 0x0 0x00100000 // IO
+                >;
+			// ranges = <0x02000000 0x0 0x90000000 0x90000000 0x0 0x10000000
+			// 	  0x42000000 0x0 0x80000000 0x80000000 0x0 0x10000000
+			//	  0x01000000 0x0 0x00000000 0xe2000000 0x0 0x00100000>;
+			clock-frequency = <0>;
+			#interrupt-cells = <1>;
+			#size-cells = <2>;
+			#address-cells = <3>;
+			// reg = <0xe0008500 0x100>;
+            reg = <
+                0xe0008500 0x100    // PCI controller
+                0xe0008300 0x80     // PCI configuration access
+                >;
+			compatible = "fsl,mpc8349-pci";
+			device_type = "pci";
+		};
+	};
+};

@@ -167,6 +167,9 @@ static int __devinit mpc52xx_wkup_gpiochip_probe(struct of_device *ofdev,
 	ofchip->gc.get              = mpc52xx_wkup_gpio_get;
 	ofchip->gc.set              = mpc52xx_wkup_gpio_set;
 
+    /* 2009/12/1, Added by Panasonic */
+    gc->base = -1;              /* dynamic allocation of GPIOs */
+
 	ret = of_mm_gpiochip_add(ofdev->node, &chip->mmchip);
 	if (ret)
 		return ret;
@@ -328,6 +331,9 @@ static int __devinit mpc52xx_simple_gpiochip_probe(struct of_device *ofdev,
 	ofchip->gc.get              = mpc52xx_simple_gpio_get;
 	ofchip->gc.set              = mpc52xx_simple_gpio_set;
 
+    /* 2009/12/1, Added by Panasonic */
+    gc->base = -1;              /* dynamic allocation of GPIOs */
+
 	ret = of_mm_gpiochip_add(ofdev->node, &chip->mmchip);
 	if (ret)
 		return ret;
@@ -421,6 +427,9 @@ static int __devinit mpc52xx_gpt_gpiochip_probe(struct of_device *ofdev,
 	chip->gc.direction_output = mpc52xx_gpt_gpio_dir_out;
 	chip->gc.get              = mpc52xx_gpt_gpio_get;
 	chip->gc.set              = mpc52xx_gpt_gpio_set;
+
+    /* 2009/12/1, Added by Panasonic */
+    gc->base = -1;              /* dynamic allocation of GPIOs */
 
 	return of_mm_gpiochip_add(ofdev->node, mmchip);
 }

@@ -16,6 +16,7 @@
 #	To make it easier to setup a cross compiler,
 #	CROSS32_COMPILE is setup as a prefix just like CROSS_COMPILE
 #	in the toplevel makefile.
+## $Id: Makefile 5088 2010-02-09 02:49:16Z Sawada Koji $
 
 all: $(obj)/zImage
 
@@ -35,7 +36,11 @@ endif
 
 BOOTCFLAGS	+= -I$(obj) -I$(srctree)/$(obj) -I$(srctree)/$(src)/libfdt
 
+ifndef CONFIG_DTS_FLAGS_STRING
 DTS_FLAGS	?= -p 1024
+else
+DTS_FLAGS	?= $(shell echo $(CONFIG_DTS_FLAGS_STRING))
+endif
 
 $(obj)/4xx.o: BOOTCFLAGS += -mcpu=405
 $(obj)/ebony.o: BOOTCFLAGS += -mcpu=405
@@ -184,8 +189,19 @@ endif
 
 # args (to if_changed): 1 = (this rule), 2 = platform, 3 = dts 4=dtb 5=initrd
 quiet_cmd_wrap	= WRAP    $@
+## 2008/12/16, Modified by Panasonic >>>>
+VERINFO = $(strip $(shell cat $(srctree)/$(CONFIG_P2PF_VERINFO_FILE)))
+ifdef CONFIG_P2PF_VERINFO
+      cmd_wrap	=$(CONFIG_SHELL) $(wrapper) -c -o $@ -p $2 $(CROSSWRAP) -V $(VERINFO) \
+		$(if $3, -s $3)$(if $4, -d $4)$(if $5, -i $5) vmlinux
+else
       cmd_wrap	=$(CONFIG_SHELL) $(wrapper) -c -o $@ -p $2 $(CROSSWRAP) \
 		$(if $3, -s $3)$(if $4, -d $4)$(if $5, -i $5) vmlinux
+endif
+#      cmd_wrap	=$(CONFIG_SHELL) $(wrapper) -c -o $@ -p $2 $(CROSSWRAP) \
+#		$(if $3, -s $3)$(if $4, -d $4)$(if $5, -i $5) vmlinux
+## <<<< 2008/12/16, Modified by Panasonic
+
 
 image-$(CONFIG_PPC_PSERIES)		+= zImage.pseries
 image-$(CONFIG_PPC_MAPLE)		+= zImage.pseries
@@ -198,7 +214,7 @@ image-$(CONFIG_PPC_PMAC)		+= zImage.pmac
 image-$(CONFIG_PPC_HOLLY)		+= dtbImage.holly
 image-$(CONFIG_PPC_PRPMC2800)		+= dtbImage.prpmc2800
 image-$(CONFIG_PPC_ISERIES)		+= zImage.iseries
-image-$(CONFIG_DEFAULT_UIMAGE)		+= uImage
+image-$(CONFIG_DEFAULT_UIMAGE)		+= uImage uuImage
 
 #
 # Targets which embed a device tree blob
@@ -315,6 +331,9 @@ $(obj)/zImage.iseries: vmlinux
 
 $(obj)/uImage: vmlinux $(wrapperbits)
 	$(call if_changed,wrap,uboot)
+
+$(obj)/uuImage: vmlinux $(wrapperbits)
+	$(call if_changed,wrap,uuboot)
 
 $(obj)/cuImage.%: vmlinux $(obj)/%.dtb $(wrapperbits)
 	$(call if_changed,wrap,cuboot-$*,,$(obj)/$*.dtb)

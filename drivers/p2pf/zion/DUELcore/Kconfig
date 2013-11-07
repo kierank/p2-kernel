@@ -1,0 +1,7 @@
+config ZION_DUELCORE
+	bool "Support DUEL Core"
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+
+	  If unsure, say Y.

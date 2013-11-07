@@ -3,6 +3,8 @@
  *
  * (C) Copyright 2004 Linus Torvalds
  */
+/* $Id: iomap.c 11065 2010-12-10 06:42:32Z Noguchi Isao $ */
+
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/mm.h>
@@ -127,8 +129,16 @@ void __iomem *pci_iomap(struct pci_dev *dev, int bar, unsigned long max)
 		return NULL;
 	if (max && len > max)
 		len = max;
-	if (flags & IORESOURCE_IO)
+/* 2010/12/9, modified by Panasonic (SAV) ---> */
+	if (flags & IORESOURCE_IO) {
+#ifdef CONFIG_PPC_MPC83XX_PCI_IOMAP
+        struct pci_controller *hose = (struct pci_controller *) dev->bus->sysdata;
+        return hose->io_base_virt + (start - hose->io_resource.start);
+#else  /* !CONFIG_PPC_MPC83XX_PCI_IOMAP */
 		return ioport_map(start, len);
+#endif  /* CONFIG_PPC_MPC83XX_PCI_IOMAP */
+    }
+/* <--- 2010/12/9, modified by Panasonic (SAV) */
 	if (flags & IORESOURCE_MEM)
 		return ioremap(start, len);
 	/* What? */

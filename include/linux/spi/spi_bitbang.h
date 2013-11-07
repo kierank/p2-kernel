@@ -1,3 +1,5 @@
+/* $Id: spi_bitbang.h 11136 2010-12-14 05:30:50Z Noguchi Isao $ */
+
 #ifndef	__SPI_BITBANG_H
 #define	__SPI_BITBANG_H
 
@@ -115,6 +117,34 @@ bitbang_txrx_be_cpha0(struct spi_device *spi,
 	return word;
 }
 
+/* 2010/12/13, added by Panasonic (SAV) ---> */
+static inline u32
+bitbang_txrx_be_cpha0_lsb1st(struct spi_device *spi,
+		unsigned nsecs, unsigned cpol,
+		u32 word, u8 bits)
+{
+	/* if (cpol == 0) this is SPI_MODE_0; else this is SPI_MODE_2 */
+
+    /* clock starts at inactive polarity */
+    for (; likely(bits); bits--) {
+
+        /* setup LSB (to slave) on trailing edge */
+        setmosi(spi, word & 1);
+        spidelay(nsecs);	/* T(setup) */
+
+        setsck(spi, !cpol);
+        spidelay(nsecs);
+
+        /* sample LSB (from slave) on leading edge */
+        word >>= 1;
+        word |= getmiso(spi)? (1<<31): 0;
+        setsck(spi, cpol);
+    }
+
+	return word>>(32 - bits);
+}
+/* <--- 2010/12/13, added by Panasonic (SAV) */
+
 static inline u32
 bitbang_txrx_be_cpha1(struct spi_device *spi,
 		unsigned nsecs, unsigned cpol,
@@ -139,5 +169,33 @@ bitbang_txrx_be_cpha1(struct spi_device *spi,
 	}
 	return word;
 }
+
+/* 2010/12/13, added by Panasonic (SAV) ---> */
+static inline u32
+bitbang_txrx_be_cpha1_lsb1st(struct spi_device *spi,
+		unsigned nsecs, unsigned cpol,
+		u32 word, u8 bits)
+{
+	/* if (cpol == 0) this is SPI_MODE_1; else this is SPI_MODE_3 */
+
+    /* clock starts at inactive polarity */
+    for (; likely(bits); bits--) {
+            
+        /* setup LSB (to slave) on leading edge */
+        setsck(spi, !cpol);
+        setmosi(spi, word & 1);
+        spidelay(nsecs); /* T(setup) */
+            
+        setsck(spi, cpol);
+        spidelay(nsecs);
+            
+        /* sample MSB (from slave) on trailing edge */
+        word >>= 1;
+        word |= getmiso(spi)? (1<<31): 0;
+    }
+
+    return word >> (32 - bits);
+}
+/* <--- 2010/12/13, added by Panasonic (SAV) */
 
 #endif	/* EXPAND_BITBANG_TXRX */

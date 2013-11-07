@@ -346,6 +346,19 @@ static pageout_t pageout(struct page *page, struct address_space *mapping,
 		}
 		return PAGE_KEEP;
 	}
+	
+/* Added by Panasonic for RT --> */
+	/* if the page belongs to RT inode, ignore it. */
+	if(mapping->host)
+	{
+	    struct inode *inode = mapping->host;
+	    if(test_bit(RS_RT, &inode->i_rsrvr_flags))
+		{
+			return PAGE_KEEP;
+		}
+	}
+/* <-- Added by Panasonic for RT */
+	
 	if (mapping->a_ops->writepage == NULL)
 		return PAGE_ACTIVATE;
 	if (!may_write_to_queue(mapping->backing_dev_info))

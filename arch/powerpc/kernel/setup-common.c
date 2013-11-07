@@ -529,7 +529,10 @@ void probe_machine(void)
 		for (;;);
 	}
 
+	/* Modified by Panasonic for fast bootup. */
+#if ! defined(CONFIG_DISABLE_INIT_MESSAGE)
 	printk(KERN_INFO "Using %s machine description\n", ppc_md.name);
+#endif /* ! CONFIG_DISABLE_INIT_MESSAGE */
 }
 
 /* Match a class of boards, not a specific device configuration. */

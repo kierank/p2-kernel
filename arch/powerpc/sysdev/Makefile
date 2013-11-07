@@ -1,3 +1,5 @@
+## $Id: Makefile 5088 2010-02-09 02:49:16Z Sawada Koji $
+
 ifeq ($(CONFIG_PPC64),y)
 EXTRA_CFLAGS			+= -mno-minimal-toc
 endif
@@ -28,6 +30,7 @@ obj-$(CONFIG_AXON_RAM)		+= axonram.o
 obj-$(CONFIG_PPC_INDIRECT_PCI)	+= indirect_pci.o
 obj-$(CONFIG_PPC_I8259)		+= i8259.o
 obj-$(CONFIG_IPIC)		+= ipic.o
+obj-$(CONFIG_PCI_MSI)		+= mpc83xx_msi.o
 obj-$(CONFIG_4xx)		+= uic.o
 obj-$(CONFIG_4xx_SOC)		+= ppc4xx_soc.o
 obj-$(CONFIG_XILINX_VIRTEX)	+= xilinx_intc.o
@@ -35,6 +38,10 @@ obj-$(CONFIG_OF_RTC)		+= of_rtc.o
 ifeq ($(CONFIG_PCI),y)
 obj-$(CONFIG_4xx)		+= ppc4xx_pci.o
 endif
+
+# 2009/12/1, Added by Panasonic
+obj-$(CONFIG_PPC_83xx_GPIO) += mpc83xx_gpio.o
+obj-$(CONFIG_P2PF) += p2pf/
 
 # Temporary hack until we have migrated to asm-powerpc
 ifeq ($(ARCH),powerpc)
@@ -44,6 +51,10 @@ obj-$(CONFIG_QUICC_ENGINE)	+= cpm_common.o
 obj-$(CONFIG_PPC_DCR)		+= dcr.o
 obj-$(CONFIG_8xx)		+= mpc8xx_pic.o cpm1.o
 obj-$(CONFIG_UCODE_PATCH)	+= micropatch.o
+endif
+
+ifeq ($(CONFIG_SUSPEND),y)
+obj-$(CONFIG_6xx)		+= 6xx-suspend.o
 endif
 
 ifeq ($(CONFIG_SUSPEND),y)

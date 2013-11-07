@@ -1,0 +1,202 @@
+＜ZIONドライバ ROMIF部 API＞
+
+0. ROMIF部の役割
+
+ZIONドライバROMIF部は、旭化成E2PROM(SCIプロトコル)とルネサスE2PROM(SPIプロトコル)に対するRead/Writeを実行する手段を提供する。
+ROMIF部のマイナー番号は include/linux/zion.h にて ZION_ROMIF マクロで定義されている。
+
+
+1. ioctlを用いてコマンド実行
+
+ioctlを用いて、ROMIFのレジスタ設定やE2PROMに対するread/writeを実行することができる。
+実行できるコマンドは、以下の通り。
+
+・SCI/SPI共通
+　- ZION_ROMIF_IOC_RESET:	ROMIFソフトリセット実行
+　- ZION_ROMIF_IOC_SET_CLKDIV:	ROMクロックの分周比の設定
+・SCI
+　- ZION_ROMIF_IOC_SCI_READ:	SCIプロトコルread実行
+　- ZION_ROMIF_IOC_SCI_WRITEENB:SCIプロトコルwrite enable実行
+　- ZION_ROMIF_IOC_SCI_WRITE:	SCIプロトコルwrite実行
+　- ZION_ROMIF_IOC_SCI_READ2MBUS: SCIプロトコルE2PROMのデータのM-BUS転送
+・SPI
+　- ZION_ROMIF_IOC_SPI_READ:	SPIプロトコルread実行
+　- ZION_ROMIF_IOC_SPI_WRITEENB:SPIプロトコルwrite enable実行
+　- ZION_ROMIF_IOC_SPI_WRITE:	SPIプロトコルwrite実行
+　- ZION_ROMIF_IOC_SPI_SREAD:	SPIプロトコルstatus read実行
+　- ZION_ROMIF_IOC_SPI_SWRITE:	SPIプロトコルstatus write実行
+　- ZION_ROMIF_IOC_SPI_READ2MBUS: SPIプロトコルE2PROMのデータのM-BUS転送
+
+
+コマンドの詳細は以下に記載。
+
+
+・関数名:
+    ZION_ROMIF_IOC_RESET
+・機　能:
+    ROMIFソフトリセット実行
+・引　数:
+    なし
+
+
+・関数名:
+    ZION_ROMIF_IOC_SET_CLKDIV
+・機　能:
+    ROMクロックの分周比の設定
+・引　数:
+    unsigned char ucClkDiv [in]: 分周比
+・備　考:
+    MCLKの分周比-1 の値を設定すること
+
+
+・関数名:
+    ZION_ROMIF_IOC_SCI_READ
+・機　能:
+    SCIプロトコル(旭化成E2PROM)から1WORDのデータをread
+・引　数:
+    struct zion_romif_sci_buf *s_romif_buf [in&out]
+
+    struct zion_romif_sci_buf
+    {
+     unsigned short adr;	/* E2PROMアクセスアドレス */
+     unsigned short dat;	/* データ */
+    };
+
+・備　考:
+    旭化成E2PROMはWORDアドレス。
+
+
+・関数名:
+    ZION_ROMIF_IOC_SCI_WRITEENB
+・機　能:
+    SCIプロトコル(旭化成E2PROM)へのwrite enable実行
+・引　数:
+    なし
+
+
+・関数名:
+    ZION_ROMIF_IOC_SCI_WRITE
+・機　能:
+    SCIプロトコル(旭化成E2PROM)から1WORDのデータをwrite
+・引　数:
+    struct zion_romif_sci_buf *s_romif_buf [in]
+
+    struct zion_romif_sci_buf
+    {
+     unsigned short adr;	/* E2PROMアクセスアドレス */
+     unsigned short dat;	/* データ */
+    };
+
+・備　考:
+    旭化成E2PROMはWORDアドレス。
+
+
+・関数名:
+    ZION_ROMIF_IOC_SCI_READ2MBUS
+・機　能:
+    SCIプロトコル(旭化成E2PROM)のデータをZION M-BUS空間へ転送
+・引　数:
+    struct zion_romif_trns *s_romif_trns [in]
+
+    struct zion_romif_trns
+    {
+     unsigned short src;	/* E2PROMアドレス(転送元) */
+     unsigned short dest;	/* M-BUS空間アドレス(転送先) */
+     unsigned short size;	/* 転送サイズ */
+     unsigned char inc;		/* E2PROMアドレス増分 */
+    };
+
+・備　考:
+    旭化成E2PROMはWORDアドレスのため、
+    s_romif_trns->incは、1 を設定。
+
+
+
+・関数名:
+    ZION_ROMIF_IOC_SPI_READ
+・機　能:
+    SPIプロトコル(ルネサスE2PROM)から1WORDのデータをread
+・引　数:
+    struct zion_romif_spi_buf *s_romif_buf [in&out]
+
+    struct zion_romif_spi_buf
+    {
+     unsigned short adr;	/* E2PROMアクセスアドレス */
+     unsigned short dat;	/* データ */
+    };
+
+・備　考:
+    ルネサスE2PROMはBYTEアドレス。
+
+
+・関数名:
+    ZION_ROMIF_IOC_SPI_WRITEENB
+・機　能:
+    SPIプロトコル(ルネサスE2PROM)へのwrite enable実行
+・引　数:
+    なし
+
+
+・関数名:
+    ZION_ROMIF_IOC_SPI_WRITE
+・機　能:
+    SPIプロトコル(ルネサスE2PROM)から1WORDのデータをwrite
+・引　数:
+    struct zion_romif_spi_buf *s_romif_buf [in]
+
+    struct zion_romif_spi_buf
+    {
+     unsigned short adr;	/* E2PROMアクセスアドレス */
+     unsigned short dat;	/* データ */
+    };
+
+・備　考:
+    ルネサスE2PROMはBYTEアドレス。
+    write実行後、statusのWIPビットをポーリングでチェックしている。
+    WIPビットチェックのタイムアウトは約2secに設定。
+
+
+・関数名:
+    ZION_ROMIF_IOC_SPI_READ2MBUS
+・機　能:
+    SPIプロトコル(ルネサスE2PROM)のデータをZION M-BUS空間へ1WORD単位で転送
+・引　数:
+    struct zion_romif_trns *s_romif_trns [in]
+
+    struct zion_romif_trns
+    {
+     unsigned short src;	/* E2PROMアドレス(転送元) */
+     unsigned short dest;	/* M-BUS空間アドレス(転送先) */
+     unsigned short size;	/* 転送サイズ */
+     unsigned char inc;		/* E2PROMアドレス増分 */
+    };
+
+・備　考:
+    ルネサスE2PROMはBYTEアドレスのため、
+    s_romif_trns->incは、2 を設定。
+
+
+・関数名:
+    ZION_ROMIF_IOC_SPI_SREAD
+・機　能:
+    SPIプロトコル(ルネサスE2PROM)からstatusをread
+・引　数:
+    struct zion_romif_spi_stts *s_romif_stts [in&out]
+
+    struct zion_romif_spi_stts
+    {
+     unsigned short dat;	/* status */
+    };
+
+
+・関数名:
+    ZION_ROMIF_IOC_SPI_SWRITE
+・機　能:
+    SPIプロトコル(ルネサスE2PROM)からstatusをwrite
+・引　数:
+    struct zion_romif_spi_stts *s_romif_stts [in]
+
+    struct zion_romif_spi_stts
+    {
+     unsigned short dat;	/* status */
+    };

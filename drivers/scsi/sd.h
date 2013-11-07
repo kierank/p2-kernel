@@ -1,3 +1,4 @@
+/* $Id: sd.h 12081 2011-01-31 06:38:59Z Noguchi Isao $ */
 #ifndef _SCSI_DISK_H
 #define _SCSI_DISK_H
 
@@ -17,7 +18,14 @@
 /*
  * Time out in seconds for disks and Magneto-opticals (which are slower).
  */
-#define SD_TIMEOUT		(30 * HZ)
+/* P2PF TARGET DEPENDENT CODE (K277) -->	*/
+/* Modified by Panasonic : 2009/05/07		*/
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+ #define SD_TIMEOUT		(5 * HZ)
+#else
+ #define SD_TIMEOUT		(30 * HZ)
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)	*/
 #define SD_MOD_TIMEOUT		(75 * HZ)
 
 /*
@@ -37,6 +45,46 @@
  */
 #define SD_LAST_BUGGY_SECTORS	8
 
+/* Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+#include <scsi/scsi_ioctl.h>
+#include <scsi/sdc.h>
+#include <linux/spinlock.h>
+#include <linux/semaphore.h>
+#include <linux/wait.h>
+#include <linux/list.h>
+
+/*
+ * structure of scsi-disk device for type of character
+ */
+struct scsi_disk_char {
+    struct list_head list;
+
+    /* members for device informations */
+	unsigned int host_no;		/* Copy of sdc_dev_info.host_no, basic referrence for find & search	*/
+	unsigned int dev_id;		/* Device id ( id & lun & channel & host_no	for find & search		*/
+    int hosttype;
+    union scsi_ioctl_devinfo devinfo;
+    struct sdc_dev_info sdc_dinfo;  /* The device information for RscMgr							*/
+
+    /* members for direct transfer */
+	struct sdcdev_ioc_req_direct_transfer req_transfer;
+    int trans_state;        		/* 0:IDLE, 1:BUSY,.....			*/
+    spinlock_t lock;                /* Spinlocks for trans_state    */
+    struct semaphore sema;          /* MUTEX for direct transfer */
+    wait_queue_head_t wait_queue;         /* for work_queue		*/
+	char sense_data[ SCSI_SENSE_BUFFERSIZE ];
+	int result;                 /* result of scsi command */
+    int retval;                 /* return value of direct trransfer thread */
+
+};
+
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 */
+
 struct scsi_disk {
 	struct scsi_driver *driver;	/* always &sd_template */
 	struct scsi_device *device;
@@ -53,6 +101,13 @@ struct scsi_disk {
 	unsigned	WCE : 1;	/* state of disk WCE bit */
 	unsigned	RCD : 1;	/* state of disk RCD bit, unused */
 	unsigned	DPOFUA : 1;	/* state of disk DPOFUA bit */
+
+/* Modified by Panasonic (SAV), 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+    struct scsi_disk_char sdc;
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV), 2011/01/31 */
+
 };
 #define to_scsi_disk(obj) container_of(obj,struct scsi_disk,dev)
 
@@ -61,11 +116,47 @@ static inline struct scsi_disk *scsi_disk(struct gendisk *disk)
 	return container_of(disk->private_data, struct scsi_disk, driver);
 }
 
+/* Modified by Panasonic (SAV), 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+static inline struct scsi_disk *sdc_to_sdsk(struct scsi_disk_char *sdcp)
+{
+    return container_of(sdcp, struct scsi_disk, sdc);
+}
+
+static inline struct scsi_device *sdc_to_sdev(struct scsi_disk_char *sdcp)
+{
+    struct scsi_disk *sdkp = sdc_to_sdsk(sdcp);
+    return sdkp? sdkp->device: NULL;
+}
+
+static inline struct scsi_disk_char *sdsk_to_sdc(struct scsi_disk *sdkp)
+{
+    return (sdkp)? (&sdkp->sdc): NULL;
+}
+
+static inline const char *sdc_dletter(struct scsi_disk_char *sdcp)
+{
+    struct gendisk *gd = sdc_to_sdsk(sdcp)->disk;
+    return gd? gd->disk_name: "sd?";
+}
+
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV), 2011/01/31 */
+
+
 #define sd_printk(prefix, sdsk, fmt, a...)				\
         (sdsk)->disk ?							\
 	sdev_printk(prefix, (sdsk)->device, "[%s] " fmt,		\
 		    (sdsk)->disk->disk_name, ##a) :			\
 	sdev_printk(prefix, (sdsk)->device, fmt, ##a)
+
+/* Modified by Panasonic (SAV), 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+#define sdc_printk(prefix, sdcp, fmt, a...) \
+    sd_printk(prefix, sdc_to_sdsk(sdcp), fmt, ##a)
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV), 2011/01/31 */
 
 /*
  * A DIF-capable target device can be formatted with different

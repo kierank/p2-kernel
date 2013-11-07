@@ -85,8 +85,13 @@ next:
 
 	*bh = sb_bread(sb, phys);
 	if (*bh == NULL) {
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/06/24       */
+#if 0
 		printk(KERN_ERR "FAT: Directory bread(block %llu) failed\n",
 		       (unsigned long long)phys);
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 		/* skip this block */
 		*pos = (iblock + 1) << sb->s_blocksize_bits;
 		goto next;
@@ -757,6 +762,16 @@ static int fat_ioctl_readdir(struct inode *inode, struct file *filp,
 	return ret;
 }
 
+static int fat_ioctl_set_prev_free(struct inode *inode, struct file *filp, unsigned long arg)
+{
+	unsigned int new_prev_free;
+
+	if(copy_from_user((void *)&new_prev_free, (void *)arg, sizeof(unsigned int)))
+		return -EINVAL;
+
+	return fat_set_prev_free(inode->i_sb, new_prev_free);
+}
+
 static int fat_dir_ioctl(struct inode *inode, struct file *filp,
 			 unsigned int cmd, unsigned long arg)
 {
@@ -772,6 +787,9 @@ static int fat_dir_ioctl(struct inode *inode, struct file *filp,
 		short_only = 0;
 		both = 1;
 		break;
+	case FAT_IOCTL_SET_PREV_FREE:
+		return fat_ioctl_set_prev_free(inode, filp, arg);
+
 	default:
 		return fat_generic_ioctl(inode, filp, cmd, arg);
 	}

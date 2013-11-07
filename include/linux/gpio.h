@@ -25,6 +25,13 @@ static inline int gpio_is_valid(int number)
 	return 0;
 }
 
+/* 2010/1/12,added by Panasonic >>>> */
+static inline int gpio_is_valid_port(int number)
+{
+	return 0;
+}
+/* <<<< 2010/1/12,added by Panasonic */
+
 static inline int gpio_request(unsigned gpio, const char *label)
 {
 	return -ENOSYS;

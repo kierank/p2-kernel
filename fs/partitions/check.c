@@ -490,6 +490,14 @@ int rescan_partitions(struct gendisk *disk, struct block_device *bdev)
 	if (IS_ERR(state))	/* I/O error reading the partition table */
 		return -EIO;
 
+/* P2PF TARGET DEPENDENT CODE (K277) -->	*/
+/* Modified by Panasonic : 2009/06/09		*/
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+	if( (bdev->removal_detection) && (disk->major == SCSI_DISK0_MAJOR) )
+		return -ENODEV;
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)	*/
+
 	/* tell userspace that the media / partition table may have changed */
 	kobject_uevent(&disk->dev.kobj, KOBJ_CHANGE);
 
@@ -498,11 +506,36 @@ int rescan_partitions(struct gendisk *disk, struct block_device *bdev)
 		sector_t from = state->parts[p].from;
 		if (!size)
 			continue;
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/06/16		*/
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+		/* Following section was ported from 2.6.29	*/
+		if (from >= get_capacity(disk)) {
+			printk(KERN_WARNING
+				"%s: p%d ignored, start %llu is behind the end of the disk\n",
+				disk->disk_name, p, (unsigned long long) from);
+			continue;
+		}
+		if (from + size > get_capacity(disk)) {
+			/*
+			 * we can not ignore partitions of broken tables
+			 * created by for example camera firmware, but we
+			 * limit them to the end of the disk to avoid
+			 * creating invalid block devices
+			 */
+			printk(KERN_WARNING
+				"%s: p%d size %llu limited to end of disk\n",
+				disk->disk_name, p, (unsigned long long) size);
+			size = get_capacity(disk) - from;
+		}
+#else
 		if (from + size > get_capacity(disk)) {
 			printk(KERN_WARNING
 				"%s: p%d exceeds device capacity\n",
 				disk->disk_name, p);
 		}
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 		res = add_partition(disk, p, from, size, state->parts[p].flags);
 		if (res) {
 			printk(KERN_ERR " %s: p%d could not be added: %d\n",
@@ -513,6 +546,13 @@ int rescan_partitions(struct gendisk *disk, struct block_device *bdev)
 		if (state->parts[p].flags & ADDPART_FLAG_RAID)
 			md_autodetect_dev(bdev->bd_dev+p);
 #endif
+
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/06/23       */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+		schedule();
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 	}
 	kfree(state);
 	return 0;

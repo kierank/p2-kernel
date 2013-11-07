@@ -261,6 +261,12 @@ static int jffs2_find_nextblock(struct jffs2_sb_info *c)
 
 	jffs2_sum_reset_collected(c->summary); /* reset collected summary */
 
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+	/* adjust write buffer offset, else we get a non contiguous write bug */
+	if (!(c->wbuf_ofs % c->sector_size) && !c->wbuf_len)
+		c->wbuf_ofs = 0xffffffff;
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
+ 
 	D1(printk(KERN_DEBUG "jffs2_find_nextblock(): new nextblock = 0x%08x\n", c->nextblock->offset));
 
 	return 0;

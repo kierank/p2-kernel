@@ -5,6 +5,8 @@
 # nobody's needed a slave side API yet.  The master-role API is not
 # fully appropriate there, so it'd need some thought to do well.
 #
+## $Id: Kconfig 11136 2010-12-14 05:30:50Z Noguchi Isao $
+
 menuconfig SPI
 	bool "SPI support"
 	depends on HAS_IOMEM
@@ -89,6 +91,18 @@ config SPI_BITBANG
 	  This is library code, and is automatically selected by drivers that
 	  need it.  You only need to select this explicitly to support driver
 	  modules that aren't part of this kernel tree.
+
+## 2010/12/13, added by Panasonic (SAV) -->
+config SPI_GPIO
+	tristate "SPI master by GPIO"
+	depends on EXPERIMENTAL
+	select GENERIC_GPIO
+	select ARCH_REQUIRE_GPIOLIB
+	select SPI_BITBANG
+    default n
+	help
+	  SPI driver using GPIO lines to provide the SPI bus.
+## <-- 2010/12/13, added by Panasonic (SAV)
 
 config SPI_BUTTERFLY
 	tristate "Parallel port adapter for AVR Butterfly (DEVELOPMENT)"

@@ -9,6 +9,10 @@
 # you can fall back to an architecture specific driver and if
 # that also fails then you can fall back to the software watchdog
 # to give you some cover.
+## $Id: Makefile 6388 2010-04-14 06:20:30Z Noguchi Isao $
+
+# P2 platform
+obj-$(CONFIG_P2MSU_WDT) += p2msu_wdt.o
 
 # ISA-based Watchdog Cards
 obj-$(CONFIG_PCWATCHDOG) += pcwd.o

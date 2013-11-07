@@ -1,0 +1,65 @@
+# P2PF infomation module configuration
+## $Id: Kconfig 3880 2009-09-07 00:36:35Z Noguchi Isao $
+
+## CONFIG_P2PF_TARGET
+config P2PF_TARGET
+	string "P2PF Target type"
+	default "Kxxx"
+	---help---
+	  This option indicates P2PF target type (ex. K000).
+
+
+## CONFIG_P2PF_HW_VERSION
+config P2PF_HW_VERSION
+	int "P2PF hardware version"
+	default 0
+	---help---
+	  This option indicates P2PF hardware version number.
+
+
+## CONFIG_P2PF_VERINFO & CONFIG_P2PF_VERINFO_FILE
+
+config P2PF_VERINFO
+	bool "Use P2PF kernel version information"
+	default n
+
+config P2PF_VERINFO_FILE
+	string "File written P2PF kernel version information under TOPDIR --- format is X.XX-XX-X.XX"
+    depends on P2PF_VERINFO = y
+    default "X.XX-XX-X.XX"
+
+
+## CONFIG_PROC_P2PF
+menuconfig PROC_P2PF
+	bool "Support /proc/p2pf"
+	depends on PROC_FS = y
+    default n
+
+if PROC_P2PF
+    
+# /proc/p2pf/bootmode
+config PROC_P2PF_BOOTMODE
+	bool    "Enable /proc entry for boot mode (/proc/p2pf/bootmode)"
+	default n
+
+choice
+	prompt "Choice boot mode (ROM/NFS/VUP)"
+	depends on PROC_P2PF_BOOTMODE = y
+
+config PROC_P2PF_BOOTMODE_ROM
+	bool "ROM"
+
+config PROC_P2PF_BOOTMODE_NFS
+	bool "NFS"
+
+config PROC_P2PF_BOOTMODE_VUP
+	bool "VUP"
+
+endchoice
+
+# /proc/p2pf/target, /proc/p2pf/hw_version
+config PROC_P2PF_TARGET
+	bool "Enable /proc entry for P2PF_TARGET & P2PF_HW_VERSION (/proc/p2pf/target, hw_version)"
+	default n
+
+endif # PROC_P2PF

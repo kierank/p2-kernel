@@ -61,6 +61,8 @@ INT_MODULE_PARM(unreset_limit,	30);		/* unreset_check's */
 /* Access speed for attribute memory windows */
 INT_MODULE_PARM(cis_speed,	300);		/* ns */
 
+unsigned int disable_insert_event = 0;	/* disable_insert_event_flag */
+
 #ifdef DEBUG
 static int pc_debug;
 
@@ -483,7 +485,13 @@ static int socket_setup(struct pcmcia_socket *skt, int initial_delay)
 		return CS_BAD_TYPE;
 	}
 
-	status = socket_reset(skt);
+	/* Modified by Panasonic for P2 */
+	if (status & SS_CARDBUS) {
+	  /* inserted P2 card */
+	  status = CS_SUCCESS;
+	} else {
+	  status = socket_reset(skt);
+	}
 
 	if (skt->power_hook)
 		skt->power_hook(skt, HOOK_POWER_POST);
@@ -612,7 +620,7 @@ static void socket_remove(struct pcmcia_socket *skt)
  */
 static void socket_detect_change(struct pcmcia_socket *skt)
 {
-	if (!(skt->state & SOCKET_SUSPEND)) {
+  if (!(skt->state & SOCKET_SUSPEND)) {
 		int status;
 
 		if (!(skt->state & SOCKET_PRESENT))
@@ -620,12 +628,12 @@ static void socket_detect_change(struct pcmcia_socket *skt)
 
 		skt->ops->get_status(skt, &status);
 		if ((skt->state & SOCKET_PRESENT) &&
-		     !(status & SS_DETECT))
+		    !(status & SS_DETECT))
 			socket_remove(skt);
 		if (!(skt->state & SOCKET_PRESENT) &&
-		    (status & SS_DETECT))
+		    (status & SS_DETECT)&&(disable_insert_event==0))
 			socket_insert(skt);
-	}
+  }
 }
 
 static int pccardd(void *__skt)
@@ -662,12 +670,16 @@ static int pccardd(void *__skt)
 
 		spin_lock_irqsave(&skt->thread_lock, flags);
 		events = skt->thread_events;
+
+		if(events!=0)
+		  skt->last_events=events;
+
 		skt->thread_events = 0;
 		spin_unlock_irqrestore(&skt->thread_lock, flags);
 
 		if (events) {
 			mutex_lock(&skt->skt_mutex);
-			if (events & SS_DETECT)
+			if ((events & SS_DETECT))
 				socket_detect_change(skt);
 			if (events & SS_BATDEAD)
 				send_event(skt, CS_EVENT_BATTERY_DEAD, CS_EVENT_PRI_LOW);
@@ -904,6 +916,98 @@ int pcmcia_insert_card(struct pcmcia_socket *skt)
 } /* insert_card */
 EXPORT_SYMBOL(pcmcia_insert_card);
 
+static ssize_t pcmcia_show_cls(struct class *cls, char *buf)
+{
+  //printk("disable_insert_event = %d\n",disable_insert_event);
+  return sprintf(buf,"%x\n",disable_insert_event);
+}
+
+/* for kernel use */
+unsigned int GET_PCMCIA_INSERT_EVENT_MUTE(void){
+  //printk("kernel:disable_insert_event = %d\n",disable_insert_event);
+  return disable_insert_event;
+}
+EXPORT_SYMBOL(GET_PCMCIA_INSERT_EVENT_MUTE);
+
+static ssize_t pcmcia_store_cls(struct class *cls,const char *buf, size_t count)
+{
+  ssize_t ret;
+  unsigned int state;
+  unsigned long flags;
+  unsigned int i = 0;
+  struct pcmcia_socket *s;
+
+
+  ret = sscanf (buf, "%d\n", &state);
+  if(ret == 1 ){
+    disable_insert_event = state;
+    ret = 0;
+  }
+
+  if(disable_insert_event==0){
+    while( (s = pcmcia_get_socket_by_nr(i)) != NULL) {
+      if ( (s->thread) && (s->last_events!=0) ) {
+	spin_lock_irqsave(&s->thread_lock, flags);
+	s->thread_events |= s->last_events;
+	spin_unlock_irqrestore(&s->thread_lock, flags);
+	wake_up_process(s->thread); /* no thread_wait in 2.6.27 */
+      }		  
+      i++;
+    }
+  }
+
+  //printk("disable_insert_event = %d\n",disable_insert_event);
+  return ret ? ret : count;
+}
+
+/* for kernel use */
+void SET_PCMCIA_INSERT_EVENT_MUTE(unsigned int value){
+  unsigned long flags;
+  unsigned int i = 0;
+  struct pcmcia_socket *s;
+  disable_insert_event=value;
+  //printk("disable_insert_event = %d\n",disable_insert_event);
+  if(disable_insert_event==0){
+    while( (s = pcmcia_get_socket_by_nr(i)) != NULL) {
+      if ( (s->thread) && (s->last_events!=0) ) {
+	spin_lock_irqsave(&s->thread_lock, flags);
+	s->thread_events |= s->last_events;
+	spin_unlock_irqrestore(&s->thread_lock, flags);
+	wake_up_process(s->thread); /* no thread_wait in 2.6.27 */
+      }		  
+      i++;
+    }
+  }
+}
+EXPORT_SYMBOL(SET_PCMCIA_INSERT_EVENT_MUTE);
+
+static ssize_t pcmcia_show_all_card_status(struct class *cls, char *buf)
+{
+  unsigned int status,slot=0,i=0;
+  struct pcmcia_socket *s;
+  	 
+  while( (s = pcmcia_get_socket_by_nr(i)) != NULL) {
+    s->ops->get_status(s, &status);
+    if (status & SS_DETECT){
+      slot += 0x01<<i;
+    }
+    i++;
+  }
+  return sprintf(buf,"0x%02x\n",slot);
+}
+  	 
+struct class_attribute pcmcia_attrs[3] = {
+  {
+    .attr = { .name = "disable_insert_event", .mode = S_IRUGO | S_IWUSR},
+    .show = pcmcia_show_cls,
+    .store= pcmcia_store_cls,
+  },
+  {
+    .attr = { .name = "AllCardStatus", .mode = S_IRUGO},
+    .show = pcmcia_show_all_card_status,
+  }
+};
+
 
 static int pcmcia_socket_uevent(struct device *dev,
 				struct kobj_uevent_env *env)
@@ -927,6 +1031,7 @@ static void pcmcia_release_socket_class(struct class *data)
 
 struct class pcmcia_socket_class = {
 	.name = "pcmcia_socket",
+	.class_attrs = pcmcia_attrs,
 	.dev_uevent = pcmcia_socket_uevent,
 	.dev_release = pcmcia_release_socket,
 	.class_release = pcmcia_release_socket_class,

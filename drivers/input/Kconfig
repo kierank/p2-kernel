@@ -1,6 +1,7 @@
 #
 # Input device configuration
 #
+## $Id: Kconfig 10412 2010-11-15 09:23:11Z Noguchi Isao $
 
 menu "Input device support"
 	depends on !S390
@@ -80,6 +81,35 @@ config INPUT_MOUSEDEV_PSAUX
 
 	  If unsure, say Y.
 
+## Added by Panasonic, 2009/7/3 >>>>>
+config INPUT_MOUSEDEV_PEVENT
+	bool "Support psued-event for mouse by ioctl command"
+	default n
+	depends on INPUT_MOUSEDEV
+	---help---
+	  If unsure, say Y.
+## <<<<< Added by Panasonic, 2009/7/3
+
+## Added by Panasonic, 2010/10/6 >>>>>
+config INPUT_MOUSEDEV_JOGEVENT
+	bool "Support jog-event for mouse by ioctl command"
+	default n
+	depends on INPUT_MOUSEDEV
+    select INPUT_MOUSEDEV_KEEP_EMUL_MODE
+	---help---
+	  If unsure, say Y.
+## <<<<< Added by Panasonic, 2010/10/6
+
+## Added by Panasonic, 2010/11/8 --->
+config INPUT_MOUSEDEV_KEEP_EMUL_MODE
+    bool "Keep emulation mode while the mouse device is aliving"
+    default n
+    depends on INPUT_MOUSEDEV
+    ---help---
+        Say Y here if you want to keep the emulation mode while the
+        mouse device is aliving.
+
+## <--- Added by Panasonic, 2010/11/8
 
 config INPUT_MOUSEDEV_SCREEN_X
 	int "Horizontal screen resolution"

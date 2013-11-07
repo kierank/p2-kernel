@@ -31,6 +31,7 @@
  *  http://www.sata-io.org/
  *
  */
+/* $Id: libata-eh.c 6875 2010-05-13 07:18:09Z Noguchi Isao $ */
 
 #include <linux/kernel.h>
 #include <linux/pci.h>
@@ -660,6 +661,7 @@ void ata_scsi_error(struct Scsi_Host *host)
 	/* finish or retry handled scmd's and clean up */
 	WARN_ON(host->host_failed || !list_empty(&host->eh_cmd_q));
 
+   /*  pr_info("######### pflags=0x%08X, eh_tries=%d\n",ap->pflags,ap->eh_tries); */
 	scsi_eh_flush_done_q(&ap->eh_done_q);
 
 	/* clean up */
@@ -1123,6 +1125,7 @@ void ata_eh_qc_complete(struct ata_queued_cmd *qc)
 {
 	struct scsi_cmnd *scmd = qc->scsicmd;
 	scmd->retries = scmd->allowed;
+/*     pr_info("######### 1: retry=%d, allowed=%d\n",scmd->retries, scmd->allowed); */
 	__ata_eh_qc_complete(qc);
 }
 
@@ -1142,8 +1145,26 @@ void ata_eh_qc_retry(struct ata_queued_cmd *qc)
 	struct scsi_cmnd *scmd = qc->scsicmd;
 	if (!qc->err_mask && scmd->retries)
 		scmd->retries--;
+/*     pr_info("######### 2: retry=%d, allowed=%d\n",scmd->retries, scmd->allowed); */
 	__ata_eh_qc_complete(qc);
 }
+
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+
+void ata_eh_qc_retry_once(struct ata_queued_cmd *qc)
+{
+	struct scsi_cmnd *scmd = qc->scsicmd;
+    if (!scmd->retries)
+        scmd->retries = scmd->allowed-1;
+    else
+        scmd->retries = scmd->allowed;
+/*     pr_info("######### 3: retry=%d, allowed=%d\n",scmd->retries, scmd->allowed); */
+	__ata_eh_qc_complete(qc);
+}
+
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/*  <--- 2010/04/25, added by Panasonic */
 
 /**
  *	ata_eh_detach_dev - detach ATA device
@@ -2210,7 +2231,21 @@ int ata_eh_reset(struct ata_link *link, int classify,
 		softreset = NULL;
 
 	now = jiffies;
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/25       */
+#if 1
+	if( ata_link_online( link ) ){
+		/* Dowble (approx.2000%=10000msec) the cool down time for HDD detection */
+		deadline = ata_deadline(ehc->last_reset, ( ATA_EH_RESET_COOL_DOWN * 2 ));
+	}else {
+		/* Shorten (approx.10%=500msec) the cool down time if the port was unlinked	*/
+		deadline = ata_deadline(ehc->last_reset, ( ATA_EH_RESET_COOL_DOWN / 10 ));
+	}
+#else
 	deadline = ata_deadline(ehc->last_reset, ATA_EH_RESET_COOL_DOWN);
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
+
 	if (time_before(now, deadline))
 		schedule_timeout_uninterruptible(deadline - now);
 
@@ -2289,7 +2324,20 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	if (ata_is_host_link(link))
 		ata_eh_freeze_port(ap);
 
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/13       */
+#if 1
+	if( ata_link_online( link ) ){
+		deadline = ata_deadline(jiffies, ata_eh_reset_timeouts[try++]);
+	}else {
+		/* Boost timeout if there is no device to handle  	*/
+		/* 2009/03/13 : Use more shorter timeout value for no linked device	*/
+		deadline = ata_deadline(jiffies, ata_eh_reset_timeouts[try++] / 80);
+	}
+#else
 	deadline = ata_deadline(jiffies, ata_eh_reset_timeouts[try++]);
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 
 	if (reset) {
 		if (verbose)
@@ -2431,7 +2479,7 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	if (time_before(now, deadline)) {
 		unsigned long delta = deadline - now;
 
-		ata_link_printk(link, KERN_WARNING,
+		ata_link_printk(link, KERN_ERR, /* Modified by Panasonic for fast bootup */
 			"reset failed (errno=%d), retrying in %u secs\n",
 			rc, DIV_ROUND_UP(jiffies_to_msecs(delta), 1000));
 
@@ -2863,6 +2911,34 @@ int ata_eh_recover(struct ata_port *ap, ata_prereset_fn_t prereset,
 dev_fail:
 		nr_failed_devs++;
 		ata_eh_handle_dev_fail(dev, rc);
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+/*         { */
+/*             pr_info("*** revalidate error = %d\n",rc); */
+/*             pr_info("*** tries = %d\n", ehc->tries[dev->devno]); */
+/*             pr_info("*** serr=0x%08x, err_mask=0x%08x,action=0x%08x, dev_action=0x%08x, flags=0x%08x\n", */
+/*                     ehc->i.serror, ehc->i.err_mask, ehc->i.action, ehc->i.dev_action[dev->devno], ehc->i.flags); */
+/*         } */
+        ehc = &dev->link->eh_context;
+        if(rc==-EIO && ehc->tries[dev->devno] == 1 && ap->ops->eh_special_recovery
+           && ata_link_online(dev->link)){ /* 2010/5/13, modified by panasonic */
+            if(ap->ops->eh_special_recovery(ap)){
+                int tag;
+                ehc->last_reset = jiffies;
+                for (tag = 0; tag < ATA_MAX_QUEUE; tag++) {
+                    struct ata_queued_cmd *qc = __ata_qc_from_tag(ap, tag);
+                    if (!(qc->flags & ATA_QCFLAG_FAILED))
+                        continue;
+                    if (qc->err_mask){
+                        qc->flags|=ATA_QCFLAG_RETRY_ONCE;
+/* pr_info(" &&&&&&&&&&&&&&  set ATA_QCFLAG_RETRY_ONCE\n"); */
+                    }
+                }
+            }
+        }
+
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/*  <--- 2010/04/25, added by Panasonic */
 
 		if (ap->pflags & ATA_PFLAG_FROZEN) {
 			/* PMP reset requires working host port.
@@ -2913,6 +2989,12 @@ void ata_eh_finish(struct ata_port *ap)
 			 */
 			if (qc->flags & ATA_QCFLAG_RETRY)
 				ata_eh_qc_retry(qc);
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+			else if (qc->flags & ATA_QCFLAG_RETRY_ONCE)
+				ata_eh_qc_retry_once(qc);
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/*  <--- 2010/04/25, added by Panasonic */
 			else
 				ata_eh_qc_complete(qc);
 		} else {

@@ -83,6 +83,10 @@ static loff_t mtd_lseek (struct file *file, loff_t offset, int orig)
 }
 
 
+#if defined(CONFIG_MTD_SINGLEOPEN) /* Add by Panasonic for single open  ----> */
+struct mtdchar_params_t mtdchar_prms[MAX_MTD_DEVICES];
+#endif /* CONFIG_MTD_SINGLEOPEN */ /* <---- Add by Panasonic for single open */
+
 
 static int mtd_open(struct inode *inode, struct file *file)
 {
@@ -91,6 +95,9 @@ static int mtd_open(struct inode *inode, struct file *file)
 	int ret = 0;
 	struct mtd_info *mtd;
 	struct mtd_file_info *mfi;
+#if	defined(CONFIG_MTD_SINGLEOPEN) /* Add by Panasonic for single open  ----> */
+	unsigned long irq_flags = 0;
+#endif /* CONFIG_MTD_SINGLEOPEN */ /* <---- Add by Panasonic for single open */
 
 	DEBUG(MTD_DEBUG_LEVEL0, "MTD_open\n");
 
@@ -133,6 +140,32 @@ static int mtd_open(struct inode *inode, struct file *file)
 
 out:
 	unlock_kernel();
+
+#if defined(CONFIG_MTD_SINGLEOPEN) /* Add by Panasonic for single open ----> */
+	/* Lock spin lock */
+	spin_lock_irqsave( &(mtdchar_prms[devnum].spn_lock), irq_flags );
+
+	/* Check MTD character driver count(ref. Linux Device Driver pp.178-179) */
+	if ( mtdchar_prms[devnum].count ) {
+		/* Already opened */
+		printk( KERN_WARNING "mtd%d is already opened(pid=%d, count=%d).\n",
+				devnum, mtdchar_prms[devnum].pid, mtdchar_prms[devnum].count );
+		
+		spin_unlock_irqrestore( &(mtdchar_prms[devnum].spn_lock), irq_flags );
+		return (-EBUSY);
+	}
+
+	/* Increment MTD character driver counter */
+	mtdchar_prms[devnum].count++;
+	mtdchar_prms[devnum].pid = current->pid;
+	DEBUG( MTD_DEBUG_LEVEL0,
+		   "\n>>>>>>>>>>>>>> [OPEN mtd%d] pid=%d, count=%d\n",
+		   devnum, mtdchar_prms[devnum].pid, mtdchar_prms[devnum].count );
+	
+	/* Unlock spin lock */
+	spin_unlock_irqrestore( &(mtdchar_prms[devnum].spn_lock), irq_flags );
+#endif /* CONFIG_MTD_SINGLEOPEN */ /* <---- Add by Panasonic for single open */
+	
 	return ret;
 } /* mtd_open */
 
@@ -142,7 +175,11 @@ static int mtd_close(struct inode *inode, struct file *file)
 {
 	struct mtd_file_info *mfi = file->private_data;
 	struct mtd_info *mtd = mfi->mtd;
-
+#if defined(CONFIG_MTD_SINGLEOPEN)  /* Add by Panasonic for single open ----> */
+	unsigned long irq_flags = 0;
+	int devnum = MINOR(inode->i_rdev) >> 1;
+#endif /* CONFIG_MTD_SINGLEOPEN */  /* <---- Add by Panasonic for single open */
+  
 	DEBUG(MTD_DEBUG_LEVEL0, "MTD_close\n");
 
 	/* Only sync if opened RW */
@@ -153,6 +190,28 @@ static int mtd_close(struct inode *inode, struct file *file)
 	file->private_data = NULL;
 	kfree(mfi);
 
+#if defined(CONFIG_MTD_SINGLEOPEN)  /* Add by Panasonic for single open ----> */
+	/* Lock spin lock */
+	spin_lock_irqsave( &(mtdchar_prms[devnum].spn_lock), irq_flags );
+
+	/* Decrement MTD character counter */
+	mtdchar_prms[devnum].count--;
+	mtdchar_prms[devnum].pid = 0;
+
+	DEBUG( MTD_DEBUG_LEVEL0,
+		   "\n[CLOSE mtd%d] pid=%d, count=%d <<<<<<<<<<<<<<\n",
+		   devnum, current->pid, mtdchar_prms[devnum].count );
+
+	/* Check MTD character counter */
+	if ( mtdchar_prms[devnum].count < 0 ) {
+		printk( KERN_ERR "mtd%d is multiple closed(pid=%d). Reset count.\n", devnum, current->pid );
+		mtdchar_prms[devnum].count = 0;
+	}
+	
+	/* Unlock spin lock */
+	spin_unlock_irqrestore( &(mtdchar_prms[devnum].spn_lock), irq_flags );
+#endif /* CONFIG_MTD_SINGLEOPEN */  /* <---- Add by Panasonic for single open */
+	
 	return 0;
 } /* mtd_close */
 
@@ -160,6 +219,16 @@ static int mtd_close(struct inode *inode, struct file *file)
    userspace buffer down and use it directly with readv/writev.
 */
 #define MAX_KMALLOC_SIZE 0x20000
+
+/* Add by Panasonic for changing kmalloc size ---> */
+#if defined(CONFIG_MTD_SET_MAX_KMALLOC_SIZE)
+# define MAX_KMALLOC_SIZE4READ  CONFIG_MTD_MAX_KMALLOC_SIZE4READ
+# define MAX_KMALLOC_SIZE4WRITE CONFIG_MTD_MAX_KMALLOC_SIZE4WRITE
+#else /* ! CONFIG_MTD_SET_MAX_KMALLOC_SIZE */
+# define MAX_KMALLOC_SIZE4READ  MAX_KMALLOC_SIZE
+# define MAX_KMALLOC_SIZE4WRITE MAX_KMALLOC_SIZE
+#endif /* CONFIG_MTD_SET_MAX_KMALLOC_SIZE */
+/* <-- Add by Panasonic for changing kmalloc size */
 
 static ssize_t mtd_read(struct file *file, char __user *buf, size_t count,loff_t *ppos)
 {
@@ -182,8 +251,8 @@ static ssize_t mtd_read(struct file *file, char __user *buf, size_t count,loff_t
 	/* FIXME: Use kiovec in 2.5 to lock down the user's buffers
 	   and pass them directly to the MTD functions */
 
-	if (count > MAX_KMALLOC_SIZE)
-		kbuf=kmalloc(MAX_KMALLOC_SIZE, GFP_KERNEL);
+	if (count > MAX_KMALLOC_SIZE4READ)
+		kbuf=kmalloc(MAX_KMALLOC_SIZE4READ, GFP_KERNEL);
 	else
 		kbuf=kmalloc(count, GFP_KERNEL);
 
@@ -192,8 +261,8 @@ static ssize_t mtd_read(struct file *file, char __user *buf, size_t count,loff_t
 
 	while (count) {
 
-		if (count > MAX_KMALLOC_SIZE)
-			len = MAX_KMALLOC_SIZE;
+		if (count > MAX_KMALLOC_SIZE4READ)
+			len = MAX_KMALLOC_SIZE4READ;
 		else
 			len = count;
 
@@ -275,8 +344,8 @@ static ssize_t mtd_write(struct file *file, const char __user *buf, size_t count
 	if (!count)
 		return 0;
 
-	if (count > MAX_KMALLOC_SIZE)
-		kbuf=kmalloc(MAX_KMALLOC_SIZE, GFP_KERNEL);
+	if (count > MAX_KMALLOC_SIZE4WRITE)
+		kbuf=kmalloc(MAX_KMALLOC_SIZE4WRITE, GFP_KERNEL);
 	else
 		kbuf=kmalloc(count, GFP_KERNEL);
 
@@ -285,8 +354,8 @@ static ssize_t mtd_write(struct file *file, const char __user *buf, size_t count
 
 	while (count) {
 
-		if (count > MAX_KMALLOC_SIZE)
-			len = MAX_KMALLOC_SIZE;
+		if (count > MAX_KMALLOC_SIZE4WRITE)
+			len = MAX_KMALLOC_SIZE4WRITE;
 		else
 			len = count;
 
@@ -791,6 +860,10 @@ static const struct file_operations mtd_fops = {
 
 static int __init init_mtdchar(void)
 {
+#if defined(CONFIG_MTD_SINGLEOPEN) /* Add by Panasonic for single open ----> */
+	int i = 0;
+#endif /* CONFIG_MTD_SINGLEOPEN */ /* <---- Add by Panasonic for single open */
+	
 	if (register_chrdev(MTD_CHAR_MAJOR, "mtd", &mtd_fops)) {
 		printk(KERN_NOTICE "Can't allocate major number %d for Memory Technology Devices.\n",
 		       MTD_CHAR_MAJOR);
@@ -806,6 +879,23 @@ static int __init init_mtdchar(void)
 	}
 
 	register_mtd_user(&notifier);
+
+#if defined(CONFIG_MTD_SINGLEOPEN) /* Add by Panasonic for single open ----> */
+	/* Init MTD character driver parameters */
+	for ( i = 0; i < MAX_MTD_DEVICES; i++ ) {
+		mtdchar_prms[i].count = 0;
+		spin_lock_init( &(mtdchar_prms[i].spn_lock) );
+		mtdchar_prms[i].pid = 0;
+	}
+#endif /* CONFIG_MTD_SINGLEOPEN */ /* <---- Add by Panasonic for single open */
+
+/* Add by Panasonic for change kmalloc size ----> */
+#if defined(CONFIG_MTD_SET_MAX_KMALLOC_SIZE)
+	printk(KERN_INFO "mtdchar: set MTD kmalloc size read=0x%X write=0x%X.\n",
+		   MAX_KMALLOC_SIZE4READ, MAX_KMALLOC_SIZE4WRITE);
+#endif /* CONFIG_MTD_SET_MAX_KMALLOC_SIZE */
+/* <---- Add by Panasonic for change kmalloc size */
+	
 	return 0;
 }
 

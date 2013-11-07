@@ -92,26 +92,7 @@ struct bio *mpage_bio_submit(int rw, struct bio *bio)
 }
 EXPORT_SYMBOL(mpage_bio_submit);
 
-static struct bio *
-mpage_alloc(struct block_device *bdev,
-		sector_t first_sector, int nr_vecs,
-		gfp_t gfp_flags)
-{
-	struct bio *bio;
-
-	bio = bio_alloc(gfp_flags, nr_vecs);
-
-	if (bio == NULL && (current->flags & PF_MEMALLOC)) {
-		while (!bio && (nr_vecs /= 2))
-			bio = bio_alloc(gfp_flags, nr_vecs);
-	}
-
-	if (bio) {
-		bio->bi_bdev = bdev;
-		bio->bi_sector = first_sector;
-	}
-	return bio;
-}
+/* mpage_alloc() was moved to include/linux/mpage.h by Panasonic for RT */
 
 /*
  * support function for mpage_readpages.  The fs supplied get_block might
@@ -576,6 +557,11 @@ alloc_new:
 				bio_get_nr_vecs(bdev), GFP_NOFS|__GFP_HIGH);
 		if (bio == NULL)
 			goto confused;
+
+		/* Added by Panasonic for delayproc */
+		if(test_bit(RS_MI, &inode->i_rsrvr_flags))
+		  set_bit(BIO_RW_MI, &bio->bi_rw);
+		/* ---------- */
 	}
 
 	/*
@@ -629,8 +615,14 @@ alloc_new:
 	goto out;
 
 confused:
-	if (bio)
+	if (bio) {
+		/* Added by Panasonic for delayproc */
+		if(test_bit(RS_MI, &inode->i_rsrvr_flags))
+		  set_bit(BIO_RW_MI, &bio->bi_rw);
+		/* ---------- */
+
 		bio = mpage_bio_submit(WRITE, bio);
+	}
 
 	if (mpd->use_writepage) {
 		ret = mapping->a_ops->writepage(page, wbc);

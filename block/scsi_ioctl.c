@@ -300,6 +300,8 @@ static int sg_io(struct file *file, struct request_queue *q,
 	if (hdr->iovec_count) {
 		const int size = sizeof(struct sg_iovec) * hdr->iovec_count;
 		struct sg_iovec *iov;
+        size_t iov_data_len; /* 2011/1/31, modified by Panasonic (SAV)
+                                from 2.6.30 kernel */
 
 		iov = kmalloc(size, GFP_KERNEL);
 		if (!iov) {
@@ -313,8 +315,23 @@ static int sg_io(struct file *file, struct request_queue *q,
 			goto out;
 		}
 
+/* 2011/1/31, modified by Panasonic (SAV) from 2.6.30 kernel ---> */
+        /* SG_IO howto says that the shorter of the two wins */
+        iov_data_len = iov_length((struct iovec *)iov,
+                                  hdr->iovec_count);
+        if (hdr->dxfer_len < iov_data_len) {
+            hdr->iovec_count = iov_shorten((struct iovec *)iov,
+                                           hdr->iovec_count,
+                                           hdr->dxfer_len);
+            iov_data_len = hdr->dxfer_len;
+        }
+
 		ret = blk_rq_map_user_iov(q, rq, iov, hdr->iovec_count,
-					  hdr->dxfer_len);
+					  iov_data_len);
+/* 		ret = blk_rq_map_user_iov(q, rq, iov, hdr->iovec_count, */
+/* 					  hdr->dxfer_len); */
+/* <--- 2011/1/31, modified by Panasonic (SAV) from 2.6.30 kernel */
+
 		kfree(iov);
 	} else if (hdr->dxfer_len)
 		ret = blk_rq_map_user(q, rq, hdr->dxferp, hdr->dxfer_len);

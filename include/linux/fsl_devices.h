@@ -13,6 +13,7 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
+/* $Id: fsl_devices.h 5088 2010-02-09 02:49:16Z Sawada Koji $ */
 
 #ifndef _FSL_DEVICE_H_
 #define _FSL_DEVICE_H_
@@ -44,10 +45,27 @@
  *
  */
 
+struct fsl_sleep_platform_data {
+	/*
+	 * The bits set in this mask will be cleared in the SCCR
+	 * when put to sleep, and restored on wakeup.
+	 */
+	u32 sccr_mask;
+};
+
+/*
+ * Calls to fsl_sleep_device do not nest -- if you call
+ * sleep twice without an intervening wake, you will not
+ * be able to wake the device again.
+ */
+void fsl_sleep_device(struct fsl_sleep_platform_data *data);
+void fsl_wake_device(struct fsl_sleep_platform_data *data);
+
 struct gianfar_platform_data {
 	/* device specific information */
 	u32	device_flags;
 	/* board specific information */
+	struct fsl_sleep_platform_data sleep;
 	u32	board_flags;
 	char	bus_id[MII_BUS_ID_SIZE];
 	u32	phy_id;
@@ -70,6 +88,7 @@ struct gianfar_mdio_data {
 #define FSL_GIANFAR_DEV_HAS_EXTENDED_HASH	0x00000040
 #define FSL_GIANFAR_DEV_HAS_PADDING		0x00000080
 #define FSL_GIANFAR_DEV_HAS_MAGIC_PACKET	0x00000100
+#define FSL_GIANFAR_DEV_HAS_MDIO		0x00000200
 
 /* Flags in gianfar_platform_data */
 #define FSL_GIANFAR_BRD_HAS_PHY_INTR	0x00000001 /* set or use a timer */
@@ -104,6 +123,7 @@ struct fsl_usb2_platform_data {
 	enum fsl_usb2_operating_modes	operating_mode;
 	enum fsl_usb2_phy_modes		phy_mode;
 	unsigned int			port_enables;
+	struct fsl_sleep_platform_data sleep;
 };
 
 /* Flags in fsl_usb2_mph_platform_data */
@@ -114,17 +134,27 @@ struct fsl_spi_platform_data {
 	u32 	initial_spmode;	/* initial SPMODE value */
 	u16	bus_num;
 	bool	qe_mode;
+	bool	od_mode;            /* 2010/1/14, added by Panasonic */
 	/* board specific information */
 	u16	max_chipselect;
 	void	(*activate_cs)(u8 cs, u8 polarity);
 	void	(*deactivate_cs)(u8 cs, u8 polarity);
 	u32	sysclk;
+
+    /* 2009/12/7, added by Panasonic */
+    u8 cs2gpio[128];
 };
 
 struct mpc8xx_pcmcia_ops {
 	void(*hw_ctrl)(int slot, int enable);
 	int(*voltage_set)(int slot, int vcc, int vpp);
 };
+
+/* Returns non-zero if the current suspend operation would
+ * lead to a deep sleep (i.e. power removed from the core,
+ * instead of just the clock).
+ */
+int fsl_deep_sleep(void);
 
 /* Returns non-zero if the current suspend operation would
  * lead to a deep sleep (i.e. power removed from the core,

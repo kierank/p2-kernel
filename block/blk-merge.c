@@ -300,8 +300,9 @@ int ll_back_merge_fn(struct request_queue *q, struct request *req,
 {
 	unsigned short max_sectors;
 	int len;
-
-	if (unlikely(blk_pc_request(req)))
+	
+	/* Modified by Panasonic for RT */
+	if (unlikely(blk_pc_request(req) || rq_is_rt(req)))
 		max_sectors = q->max_hw_sectors;
 	else
 		max_sectors = q->max_sectors;

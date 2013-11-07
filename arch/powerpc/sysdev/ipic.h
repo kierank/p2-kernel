@@ -44,6 +44,11 @@ struct ipic {
 
 	/* The remapper for this IPIC */
 	struct irq_host		*irqhost;
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+	spinlock_t bitmap_lock;
+	unsigned long *hwirq_bitmap;
+#endif
 };
 
 struct ipic_info {
@@ -56,5 +61,23 @@ struct ipic_info {
 				   bit mask = 1 << (31 - bit) */
 	u8	prio_mask;	/* priority mask value */
 };
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+
+#define MSI_REGS	8
+#define MSI_IRQ_SRC	32
+
+extern u8 vec_83xx[MSI_REGS];
+
+extern int mpc83xx_msi_init(struct ipic *ipic);
+extern void ipic_mask_irq(uint irq);
+extern void ipic_unmask_irq(uint irq);
+extern void ipic_ack_irq(uint irq);
+extern int ipic_set_irq_type(uint virq, uint flow_type);
+
+extern void mpc83xx_mask_msi_irq(uint irq);
+extern void mpc83xx_unmask_msi_irq(uint irq);
+extern void mpc83xx_ack_msi_irq(uint irq);
+#endif
 
 #endif /* __IPIC_H__ */

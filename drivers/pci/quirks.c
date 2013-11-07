@@ -14,6 +14,7 @@
  *  have a silly BIOS which is unable to set your host bridge right,
  *  use the PowerTweak utility (see http://powertweak.sourceforge.net).
  */
+/* $Id: quirks.c 13304 2011-03-17 04:35:06Z Noguchi Isao $ */
 
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -2007,3 +2008,135 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, 0x4375,
 			quirk_msi_intx_disable_bug);
 
 #endif /* CONFIG_PCI_MSI */
+
+
+/* 2011.3.11, Added by Panasonic (SAV) ---> */
+
+#ifdef CONFIG_P2PF_RICOH_FUNC_DISABLE
+
+static void __init quirk_richo_bridge_func_disable(struct pci_dev *dev)
+{
+
+    dev_dbg(&dev->dev, "*** Disables functions for Ricoh cardbus bridge.\n");
+
+    /* check function number */
+    if (PCI_FUNC(dev->devfn) != 0)
+        return;
+
+    /* check revision ID */
+    {
+        u8 rev;
+
+        pci_read_config_byte(dev, 0x08, &rev);
+        dev_dbg(&dev->dev, "revision=0x%02x\n",rev);
+
+#if defined(CONFIG_P2PF_RICOH_R5C812)
+        if (rev!=0x8B) {
+            dev_err(&dev->dev, "ERROR: Not R5C812: rev=%d\n", rev);
+            return;
+        }
+#elif defined(CONFIG_P2PF_RICOH_R5C847)
+        if (rev!=0xBA) {
+             dev_err(&dev->dev, "ERROR: Not R5C847: rev=%d\n", rev);
+            return;
+        }
+#endif
+    }
+
+    /* Enables Function Disable reg.(B7h) to set AAB7h to Enables Function Write Key reg.(8Eh/8Dh)  */
+    pci_write_config_byte(dev, 0x8E, 0xAA);
+    pci_write_config_byte(dev, 0x8D, 0xB7);
+
+    /* Set Function Disable reg.(B7h) */
+    {
+        u8 reg=0;
+
+        pci_read_config_byte(dev, 0xB7, &reg);
+        dev_dbg(&dev->dev, "Before: Function Disable reg.(0xB7) = 0x%02x\n", reg);
+
+        /* PC Card slotB i/f (R5C812) */
+#ifdef CONFIG_P2PF_RICOH_SLOTB_DISABLE
+        dev_info(&dev->dev, "Disables PC Card slotB i/f forcely\n");
+        reg |= (1<<1);
+#endif  /* CONFIG_P2PF_RICOH_SLOTB_DISABLE */
+
+        /* SD Card i/f (R5C812/R5C847) */
+#ifdef CONFIG_P2PF_RICOH_SD_DISABLE
+        dev_info(&dev->dev, "Disables SD Card i/f forcely\n");
+        reg |= (1<<3);
+#endif  /* CONFIG_P2PF_RICOH_SD_DISABLE */
+
+        /* Memory Stick Card i/f (R5C812/R5C847) */
+#ifdef CONFIG_P2PF_RICOH_MS_DISABLE
+        dev_info(&dev->dev, "Disables Memory Stick Card i/f forcely\n");
+        reg |= (1<<4);
+#endif  /* CONFIG_P2PF_RICOH_MS_DISABLE */
+
+        /* MMC i/f (R5C847) */
+#ifdef CONFIG_P2PF_RICOH_MMC_DISABLE
+        dev_info(&dev->dev, "Disables MMC i/f forcely\n");
+        reg |= (1<<1);
+#endif  /* CONFIG_P2PF_RICOH_MMC_DISABLE */
+
+        /* xD Picture Card i/f (R5C847) */
+#ifdef CONFIG_P2PF_RICOH_XD_DISABLE
+        dev_info(&dev->dev, "Disables xD Picture Card i/f forcely\n");
+        reg |= (1<<7);
+#endif  /* CONFIG_P2PF_RICOH_XD_DISABLE */
+
+        /* 1394 i/f (R5C847) */
+#ifdef CONFIG_P2PF_RICOH_1394_DISABLE
+        dev_info(&dev->dev, "Disables 1394 i/f forcely\n");
+        reg |= (1<<2);
+#endif  /* CONFIG_P2PF_RICOH_1394_DISABLE */
+
+        /* Express Card i/f (R5C812) */
+#ifdef CONFIG_P2PF_RICOH_EXPRESS_DISABLE
+        dev_info(&dev->dev, "Disables Express Card i/f forcely\n");
+        reg |= (1<<6);
+#endif  /* CONFIG_P2PF_RICOH_EXPRESS_DISABLE */
+
+        /* PC Card Detection (R5C847) */
+#ifdef CONFIG_P2PF_RICOH_PC_DETECT_DISABLE
+        dev_info(&dev->dev, "Disables PC Card Detection forcely\n");
+        reg |= (1<<0);
+#endif  /* CONFIG_P2PF_RICOH_PC_DETECT_DISABLE */
+
+        /* Express Card Detection (R5C847) */
+#ifdef CONFIG_P2PF_RICOH_EXPRESS_DETECT_DISABLE
+        dev_info(&dev->dev, "Disables Express Card Detection forcely\n");
+        reg |= (1<<6);
+#endif  /* CONFIG_P2PF_RICOH_EXPRESS_DETECT_DISABLE */
+        
+        dev_dbg(&dev->dev, "After: Function Disable reg.(0xB7) = 0x%02x\n", reg);
+        pci_write_config_byte(dev, 0xB7, reg);
+
+    }
+
+#ifdef CONFIG_P2PF_RICOH_R5C847
+    /* Chane Function Disable Mode field in PC Card MISC Control Reg. (A4h) */
+    {
+        u32 reg;
+
+        pci_read_config_dword(dev, 0xA4, &reg);
+        dev_dbg(&dev->dev, "Before: PC Card MISC Control Reg.(0xA4) = 0x%08x\n", reg);
+
+        reg = (reg&~(3<<24))|(1<<24);
+
+        dev_dbg(&dev->dev, "After: PC Card MISC Control Reg.(0xA4) = 0x%08x\n", reg);
+        pci_write_config_dword(dev, 0xA4, reg);
+
+    }
+#endif  /* CONFIG_P2PF_RICOH_R5C847 */
+
+    /* Disables Function Disable reg.(B7h) to set 0000h to Enables Function Write Key reg.(8Eh/8Dh)  */
+    pci_write_config_byte(dev, 0x8E, 0x00);
+    pci_write_config_byte(dev, 0x8D, 0x00);
+
+}
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_RICOH, PCI_DEVICE_ID_RICOH_RL5C476,
+                        quirk_richo_bridge_func_disable);
+
+#endif  /* CONFIG_P2PF_RICOH_FUNC_DISABLE */
+
+/* <--- 2011.3.11, Added by Panasonic (SAV) */

@@ -1,0 +1,76 @@
+＜ZIONドライバDVCIF部 API＞
+
+0. DVCIF部の役割
+ZIONドライバDVCIF部は、ユーザー空間のプログラムがDVCIFに関する割り込みを検出する手段を提供する。
+DVCIF部のマイナー番号は include/linux/zion.h にて ZION_DVCIF マクロで定義されている。
+ZION_DVCIF+0 : FRAME割り込み以外の要因
+ZION_DVCIF+1 : PB FRAME割り込み
+ZION_DVCIF+2 : REC FRAME割り込み
+
+# MBUS空間のレジスタを設定する手段は現在のところ提供していない。
+# レジスタ設定が必要な場合は、COMMON部を使っておこなうこと。
+# デフォルトでは、RECとPBのFRAME割り込みのみが有効となっている。
+
+# DVCIFに関しては「REC」と「PB」の定義が複雑なため、注意が必要である。
+
+1. select(poll)を用いて割り込みを待つ
+Linuxのsystemcallであるselect(poll)を使って割り込みを検出することができる。
+これは、3つの割り込み検出ポート全てについて有効である。
+select自体については、Linuxのman等を参考とすること。
+
+2. ioctlを用いて割り込みを待つ
+ioctlで、commnad名を ZION_DVCIF_WAIT_INTERRUPTION とすることで割り込みを検出することができる。
+これは、3つの割り込み検出ポート全てについて有効である。
+
+関数名：
+    ZION_DVCIF_WAIT_INTERRUPTION
+機能：
+    このioctlを実行したプロセス(スレッド)は、そのポートが管理する割り込み要因が新たに発生するまでsleepさせられる。
+    割り込みが発生すると、ioctlから処理が返る。
+引数：
+    unsigned short 型へのポインタ（割込みステータスが返り値として得られる。
+    各ビットの意味はZION_DVCIF_GET_INTERRUPT_STATと同じ）
+
+3. 割り込み要因の確認をする
+ioctlで、selectで発生を確認した割り込みの要因がなにであったかを確認することができる。
+これは、3つの割り込み検出ポート全てについて有効であるが、FRAME割り込みのポートに対して実行した場合は、該当するFRAME割り込みを指すビットが立っているだけである。
+また、このioctlを読み込むと、ドライバ内部でフラグはクリアされ、新たな割り込み発生のない状態で再びioctlを呼び出しても、全ビット0の結果が返るのみである。
+
+関数名：
+    ZION_DVCIF_GET_INTERRUPT_STAT
+機能：
+    前回の ZION_DVCIF_GET_INTERRUPT_STAT実行以降に発生した割り込み要因を知る
+引数：
+    unsigned short 型へのポインタ。
+    各ビットが意味する割り込み要因は、ZIONのDV_Interrupt_Statusレジスタに対応している。
+    下記ioctl ZION_DVCIF_WAKEUP で強制呈にwakeupされた場合は、全てのビットが下がっている。
+
+     0: PB Frame Interrupt
+     1: PB Sector Interrupt
+     2: Pbint0 Interrupt
+     3: PbInt1 interrupt
+     4: PbDmaStatus Empty Interrupt
+     5: PbDmaStatus Almost Empty Interrupt
+     6: PbDmaStatus Almost Full Interrupt
+     7: PbDmaStatus Full Interrput
+     8: RecFrameInterrupt
+     9: REC Sector Interrupt
+    10: RecInt0 Interrupt
+    11: RecInt1 Interrupt
+    12: RecDmaStatus Empty Interrupt
+    13: RecDmaStatus Almost Empty Interrupt
+    14: RecDmaStatus Almost Full Interrupt
+    15: RecDmaStatus Full Interrupt
+
+4. 待ち状態のプロセス(スレッド)をwakeupさせる
+ioctlやselectを使って、そのポートで割り込み待ちをしている
+プロセス(スレッド)を強制的にwakeupすることができる。
+このとき、ZION_DVCIF_GET_INTERRUPT_STATで読み出せるフラグはセットされない。
+
+関数名：
+    ZION_DVCIF_WAKEUP
+機能：
+    そのポートで割り込み待ちしているプロセス(スレッド)を全てwakeupする
+引数：
+    なし
+

@@ -56,6 +56,7 @@ static struct super_block *alloc_super(struct file_system_type *type)
 {
 	struct super_block *s = kzalloc(sizeof(struct super_block),  GFP_USER);
 	static struct super_operations default_op;
+	int i = 0; /* Added by Panasonic for RT */
 
 	if (s) {
 		if (security_sb_alloc(s)) {
@@ -93,6 +94,43 @@ static struct super_block *alloc_super(struct file_system_type *type)
 		s->s_qcop = sb_quotactl_ops;
 		s->s_op = &default_op;
 		s->s_time_gran = 1000000000;
+
+/* Added by Panasonic for Reservoir Filesystems --> */
+		for(i=0; i<MAX_GROUPS; i++)
+		{
+		    int j;
+			
+		    s->rsrvr_sb.file_groups[i].file_group = DEFAULT_GROUP;
+		    atomic_set(&s->rsrvr_sb.file_groups[i].rt_files, 0);
+			
+		    for(j=0; j<MAX_RESERVOIRS; j++)
+			{
+				struct bio_reservoir *reservoir = &(s->rsrvr_sb.file_groups[i].reservoir[j]);
+				
+				reservoir->bio_head = NULL;
+				reservoir->bio_tail = NULL;
+				INIT_LIST_HEAD(&reservoir->inode_list);
+				atomic_set(&reservoir->rt_count, 0);
+				reservoir->sb = s;
+				mutex_init(&reservoir->reservoir_lock);
+				memset(reservoir->suspended_cls, 0,
+					   sizeof(sizeof(unsigned long)*RS_MAX_BIOS));
+				reservoir->cls_ptr = 0;
+				reservoir->max_length = 1;
+				reservoir->cur_length = 0;
+				reservoir->file_group_idx = DEFAULT_GROUP;
+			}
+		}
+		
+		s->rsrvr_sb.rt_flags = 0;
+		atomic_set(&s->rsrvr_sb.rt_total_files, 0);
+		INIT_LIST_HEAD(&s->rsrvr_sb.rt_dirty_inodes);
+		mutex_init(&s->rsrvr_sb.rt_dirty_inodes_lock);
+		mutex_init(&s->rsrvr_sb.rt_files_lock);
+		mutex_init(&s->rsrvr_sb.io_serialize);
+		mutex_init(&s->rsrvr_sb.meta_serialize);
+		s->rsrvr_sb.rs_ops = NULL;
+/* <-- end of init sequence for Reservoir Filesystems */
 	}
 out:
 	return s;
@@ -271,6 +309,9 @@ int fsync_super(struct super_block *sb)
 	return sync_blockdev(sb->s_bdev);
 }
 
+#if defined(CONFIG_DELAYPROC) /* Added by Panasonic for delayproc */
+# include <linux/rtctrl.h>
+#endif /* CONFIG_DELAYPROC */
 /**
  *	generic_shutdown_super	-	common helper for ->kill_sb()
  *	@sb: superblock to kill
@@ -288,6 +329,10 @@ int fsync_super(struct super_block *sb)
 void generic_shutdown_super(struct super_block *sb)
 {
 	const struct super_operations *sop = sb->s_op;
+
+#if defined(CONFIG_DELAYPROC) /* Added by Panasonic for RT */
+	destroy_delayproc(sb->s_dev);
+#endif /* CONFIG_DELAYPROC */
 
 	if (sb->s_root) {
 		shrink_dcache_for_umount(sb);

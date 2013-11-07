@@ -1073,6 +1073,22 @@ UNUSUAL_DEV(  0x0781, 0x0200, 0x0000, 0x9999,
 		0),
 #endif
 
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+#ifdef CONFIG_USB_STORAGE_SM331
+UNUSUAL_DEV(  0x090C, 0x6000, 0x0000, 0x9999,
+		"Silicon Motion",
+		"SM331",
+		US_SC_DEVICE, US_PR_SM331, usb_stor_sm331_init,
+		0),
+
+UNUSUAL_DEV(  0x090C, 0x6200, 0x0000, 0x9999,
+		"Silicon Motion",
+		"SM331Lt",
+		US_SC_DEVICE, US_PR_SM331, usb_stor_sm331_init,
+		0),
+#endif
+/*------------------------------------------*/
+
 #ifdef CONFIG_USB_STORAGE_FREECOM
 UNUSUAL_DEV(  0x07ab, 0xfc01, 0x0000, 0x9999,
 		"Freecom",

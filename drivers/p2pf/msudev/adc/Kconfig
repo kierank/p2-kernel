@@ -1,0 +1,79 @@
+# drivers/p2pf/msudev/adc/Kconfig
+# $Id: Kconfig 5704 2010-03-15 01:18:50Z Noguchi Isao $
+
+menuconfig MSUDEV_ADC
+    tristate "Support A/D-C input device"
+    default n
+
+if MSUDEV_ADC
+
+
+config MSUDEV_ADC_FIXED_DEVNUM
+    boolean "Enabled to fixed major number"
+    default n
+
+config MSUDEV_ADC_FIXED_MAJOR
+    int "Major number"
+    depends on MSUDEV_ADC_FIXED_DEVNUM
+    default 245
+
+config MSUDEV_ADC_FIXED_MINOR
+    int "Minor number"
+    depends on MSUDEV_ADC_FIXED_DEVNUM
+    default 32
+
+choice
+    boolean "Select lower level device"
+    default MSUDEV_ADC_DEV_NONE
+
+config  MSUDEV_ADC_DEV_DUMMY
+    boolean "dummy lower-level driver"
+    depends on MSUDEV_ADC
+
+config MSUDEV_ADC_DEV_FPGA
+    boolean "lower-level driver inplemented for FPGA"
+    depends on MSUDEV_ADC
+
+config MSUDEV_ADC_DEV_NONE
+    boolean "lower-level driver is NOT exit"
+    depends on MSUDEV_ADC
+
+endchoice
+
+# for dummy port
+if MSUDEV_ADC_DEV_DUMMY
+
+config MSUDEV_ADC_DEV_DUMMY_CAHN_NUMBER
+    int "number of dummy channel"
+    default 1
+
+endif # MSUDEV_ADC_DEV_DUMMY
+
+# for ADC implemented on FPGA
+if MSUDEV_ADC_DEV_FPGA
+
+config MSUDEV_ADC_DEV_FPGA_OF
+    bool "getting resouces by OF description"
+    default y
+
+config MSUDEV_ADC_DEV_FPGA_NUMBER
+    int "number of adc"
+    depends on !MSUDEV_ADC_DEV_FPGA_OF
+    default 1
+
+config MSUDEV_ADC_DEV_FPGA_PADDR
+    hex "physical start address of registers"
+    depends on !MSUDEV_ADC_DEV_FPGA_OF
+    
+config MSUDEV_ADC_DEV_FPGA_PSIZE
+    hex "byte size of registers"
+    depends on !MSUDEV_ADC_DEV_FPGA_OF
+
+endif # MSUDEV_ADC_DEV_FPGA
+
+config MSUDEV_ADC_PROC
+    boolean "Support /proc file for debug"
+    default n
+    depends on PROC_FS
+
+endif # MSUDEV_ADC

@@ -652,7 +652,14 @@ struct pcmcia_device * pcmcia_device_add(struct pcmcia_socket *s, unsigned int f
 	struct pcmcia_device *p_dev, *tmp_dev;
 	unsigned long flags;
 	int bus_id_len;
+	cistpl_manfid_t manfid;
 
+	if (!pccard_read_tuple(s, BIND_FN_ALL, CISTPL_MANFID, &manfid)){
+	  if( (manfid.manf!=0x0032) || (manfid.card!=0x000d) ){
+	    printk("unsupported card found!\n");
+	    return NULL;
+	  }
+	}
 	s = pcmcia_get_socket(s);
 	if (!s)
 		return NULL;
@@ -1480,7 +1487,7 @@ static int __devinit pcmcia_bus_add_socket(struct device *dev,
 	 * Ugly. But we want to wait for the socket threads to have started up.
 	 * We really should let the drivers themselves drive some of this..
 	 */
-	msleep(250);
+	/* msleep(250); */ /* XXX Modified by Panasonic for fast bootup. XXX */
 
 #ifdef CONFIG_PCMCIA_IOCTL
 	init_waitqueue_head(&socket->queue);

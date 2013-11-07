@@ -342,6 +342,9 @@ int cpm2_gpiochip_add32(struct device_node *np)
 	gc->get = cpm2_gpio32_get;
 	gc->set = cpm2_gpio32_set;
 
+    /* 2009/12/1, Added by Panasonic */
+    gc->base = -1;              /* dynamic allocation of GPIOs */
+
 	return of_mm_gpiochip_add(np, mm_gc);
 }
 #endif /* CONFIG_CPM2 || CONFIG_8xx_GPIO */

@@ -19,6 +19,8 @@
  *      -Add support for module parameters
  *	-Add patch for ethtool phys id
  */
+/* $Id: gianfar.h 5237 2010-02-18 00:25:41Z Noguchi Isao $ */
+
 #ifndef __GIANFAR_H
 #define __GIANFAR_H
 
@@ -47,6 +49,11 @@
 #include <linux/ethtool.h>
 #include <linux/fsl_devices.h>
 #include "gianfar_mii.h"
+/* 2009/9/10, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+#include "gianfar_dsas.h"
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/10, added by Panasonic */
 
 /* The maximum number of packets to be handled in one call of gfar_poll */
 #define GFAR_DEV_WEIGHT 64
@@ -759,6 +766,14 @@ struct gfar_private {
 	struct work_struct reset_task;
 	/* Network Statistics */
 	struct gfar_extra_stats extra_stats;
+
+/* 2009/9/10, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+    /* DoS Attack Shielding (DSAS) */
+    struct gfar_dsas dsas;
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/10, added by Panasonic */
+
 };
 
 static inline u32 gfar_read(volatile unsigned __iomem *addr)

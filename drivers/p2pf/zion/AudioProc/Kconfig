@@ -1,0 +1,7 @@
+config ZION_AUDIOPROC
+	bool "Support Audio Proc"
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+
+	  If unsure, say Y.

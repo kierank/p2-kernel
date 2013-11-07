@@ -1,6 +1,8 @@
 #
 # USB Host Controller Drivers
 #
+## $Id: Kconfig 10436 2010-11-16 03:21:50Z Noguchi Isao $
+
 comment "USB Host Controller Drivers"
 	depends on USB
 
@@ -17,6 +19,60 @@ config USB_C67X00_HCD
 	  To compile this driver as a module, choose M here: the
 	  module will be called c67x00.
 
+config USB_XHCI_HCD
+	tristate "xHCI HCD (USB 3.0) support (EXPERIMENTAL)"
+	depends on USB && PCI && EXPERIMENTAL
+	---help---
+	  The eXtensible Host Controller Interface (xHCI) is standard for USB 3.0
+	  "SuperSpeed" host controller hardware.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called xhci-hcd.
+
+config USB_XHCI_HCD_DEBUGGING
+	bool "Debugging for the xHCI host controller"
+	depends on USB_XHCI_HCD
+	---help---
+	  Say 'Y' to turn on debugging for the xHCI host controller driver.
+	  This will spew debugging output, even in interrupt context.
+	  This should only be used for debugging xHCI driver bugs.
+
+	  If unsure, say N.
+
+## 2010/6/28,2010/7/2 Added by Panasonic (SAV)
+menuconfig USB_XHCI_OPTION
+	bool  "*** xHCI HCD (USB 3.0) options by Panasonic"
+	depends on USB_XHCI_HCD != n
+	default n
+	---help---
+	  Enabls option setting of xHCI HCD (USB 3.0) options
+
+if USB_XHCI_OPTION
+
+## 2010/7/2, Added by Panasonic (SAV)
+config USB_XHCI_DMA_CACHE_SYNC
+    bool "Enables synchronizing data structures in host memory between cache in CPU and DMA access by xHC"
+    default y
+	---help---
+      Enables synchronizing data structures in host memorybetween
+      cache in CPU and DMA access by xHC
+
+## 2010/10/6, Added by Panasonic (SAV)
+config USB_XHCI_EP_RING_NUM
+    int "Number of endpoint transfer ring segments"
+    default 1
+	---help---
+      The number endpoint ring segments
+
+## 2010/10/6, Added by Panasonic (SAV)
+config USB_XHCI_MAX_SECTORS
+    int "Maximam sectors for a request"
+    default 256
+	---help---
+      The maximam sectors for a request
+
+endif # USB_XHCI_OPTION
+
 config USB_EHCI_HCD
 	tristate "EHCI HCD (USB 2.0) support"
 	depends on USB && USB_ARCH_HAS_EHCI
@@ -24,10 +80,7 @@ config USB_EHCI_HCD
 	  The Enhanced Host Controller Interface (EHCI) is standard for USB 2.0
 	  "high speed" (480 Mbit/sec, 60 Mbyte/sec) host controller hardware.
 	  If your USB host controller supports USB 2.0, you will likely want to
-	  configure this Host Controller Driver.  At the time of this writing, 
-	  the primary implementation of EHCI is a chip from NEC, widely available
-	  in add-on PCI cards, but implementations are in the works from other 
-	  vendors including Intel and Philips.  Motherboard support is appearing.
+	  configure this Host Controller Driver.
 
 	  EHCI controllers are packaged with "companion" host controllers (OHCI
 	  or UHCI) to handle USB 1.1 devices connected to root hub ports.  Ports
@@ -88,6 +141,77 @@ config USB_EHCI_FSL
 	---help---
 	  Variation of ARC USB block used in some Freescale chips.
 
+config USB_EHCI_SHUTDOWN_WAIT
+	int "Add wait after USB EHCI controller shutdown (usec count)"
+	depends on USB_EHCI_HCD
+	default 0
+
+## 2009/5/22, Added by Panasonic >>>>
+
+menuconfig USB_EHCI_FSL_OPTION
+	bool  "*** Freescale on-chip EHCI USB controller options"
+	depends on USB_EHCI_FSL = y
+	default n
+	---help---
+	  Enabled option setting of freescale on-chip EHCI USB controller
+
+if USB_EHCI_FSL_OPTION
+
+
+# CONFIG_USB_EHCI_FSL_STREAM_DISABLE (Added by Panasonic, 2009/5/26)
+config USB_EHCI_FSL_STREAM_DISABLE
+	bool "Disable stream mode"
+	default n
+	---help---
+	  Initial setting value of SDIS field in USBMODE register.
+
+# CONFIG_USB_EHCI_FSL_TXFIFOTHRES
+config USB_EHCI_FSL_TXFIFOTHRES
+	int "FIFO burst threshold setting (default is 2)"
+	depends on USB_EHCI_FSL_STREAM_DISABLE = n
+	default 2
+	---help---
+	  Initial setting value of TXFIFOTHRES field in TXFILLTUNING register.
+
+
+# CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT
+config USB_EHCI_FSL_ULPI_PHY_SUPPORT
+	bool "Support ULPI-PHY interface and controlls"
+	default n
+	---help---
+	  Support ULPI-PHY interface and controlls
+
+# CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS
+config USB_EHCI_FSL_ULPI_PHY_EXTVBUS
+	bool "Using external Vbus indicator for RXCMD VbusValid"
+    default n
+	depends on USB_EHCI_FSL_ULPI_PHY_SUPPORT
+	---help---
+      Using external Vbus indicator for RXCMD VbusValid.
+
+choice
+	prompt "Sellect complement of external Vbus indicator"
+	depends on USB_EHCI_FSL_ULPI_PHY_EXTVBUS
+	default USB_EHCI_FSL_ULPI_PHY_EXTVBUS_HIGH
+	---help---
+	  Sellect target product for ULPI-PHY
+
+# CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS_HIGH
+config USB_EHCI_FSL_ULPI_PHY_EXTVBUS_HIGH
+	bool "Active high"
+
+# CONFIG_USB_EHCI_FSL_ULPI_PHY_EXTVBUS_LOW
+config USB_EHCI_FSL_ULPI_PHY_EXTVBUS_LOW
+	bool "Active low"
+
+endchoice 
+
+endif # USB_EHCI_FSL_OPTION
+
+## <<<< 2009/5/28, Added by Panasonic
+
+
+
 config USB_EHCI_HCD_PPC_OF
 	bool "EHCI support for PPC USB controller on OF platform bus"
 	depends on USB_EHCI_HCD && PPC_OF
@@ -95,6 +219,85 @@ config USB_EHCI_HCD_PPC_OF
 	---help---
 	  Enables support for the USB controller present on the PowerPC
 	  OpenFirmware platform bus.
+
+#################################################################
+# 2010/8/18, added by Panasonic ===>
+#
+
+## NEC USB2.0 controller
+menuconfig USB_EHCI_PCI_NEC
+	bool "Optional setting for NEC USB2.0 controller"
+	depends on USB_EHCI_HCD && PCI
+    default n
+	---help---
+	  Enables Optional setting for the NEC USB2.0 controller.
+
+if USB_EHCI_PCI_NEC
+
+## chip type
+choice
+    prompt "Chip type"
+    depends on USB_EHCI_PCI_NEC
+
+# uPD720101
+config USB_EHCI_UPD720101
+    bool "NEC uPD720101 USB 2.0 controller"
+
+# uPD720102
+config USB_EHCI_UPD720102
+    bool "NEC uPD720102 USB 2.0 controller"
+
+endchoice
+
+## Port number for uPD720101
+config USB_EHCI_UPD72010X_PORT_NO
+    int "Port number [2-5]"
+    depends on USB_EHCI_UPD720101
+    default 5
+
+## Port number for uPD720102
+config USB_EHCI_UPD72010X_PORT_NO
+    int "Port number [1-3]"
+    depends on USB_EHCI_UPD720102
+    default 3
+
+## DisablesPPC setting
+config USB_EHCI_UPD72010X_PPCOFF
+    bool "Disables to use port power control switch (PPC_setting)"
+    default n
+
+## Disable Hyper-Speed mode
+config USB_EHCI_UPD72010X_DISABLE_HSMODE
+    bool "Disables Hyper-Speed mode (when HSMODE pin is LOW)"
+    depends on USB_EHCI_UPD720102
+    default n
+
+## Clock select for uPD720101
+config USB_EHCI_UPD72010X_OSC_48MHz
+    bool "Clock selecting:  y -- 48MHz Oscillator, n -- 30MHz Xtal"
+    depends on USB_EHCI_UPD720101
+	---help---
+    Select clock frequency (48MHz Oscillator or 30MHz X'tal)
+
+endif # USB_EHCI_PCI_NEC
+
+#
+# <==== 2010/8/18, added by Panasonic
+#################################################################
+
+
+#config USB_OXU210HP_HCD
+#	tristate "OXU210HP HCD support"
+#	depends on USB
+#	---help---
+#	  The OXU210HP is an USB host/OTG/device controller. Enable this
+#	  option if your board has this chip. If unsure, say N.
+#
+#	  This driver does not support isochronous transfers and doesn't
+#	  implement OTG nor USB device controllers.
+#
+#	  To compile this driver as a module, choose M here: the
+#	  module will be called oxu210hp-hcd.
 
 config USB_ISP116X_HCD
 	tristate "ISP116X HCD support"
@@ -115,30 +318,19 @@ config USB_ISP1760_HCD
 	  The ISP1760 chip is a USB 2.0 host controller.
 
 	  This driver does not support isochronous transfers or OTG.
+	  This USB controller is usually attached to a non-DMA-Master
+	  capable bus. NXP's eval kit brings this chip on PCI card
+	  where the chip itself is behind a PLB to simulate such
+	  a bus.
 
 	  To compile this driver as a module, choose M here: the
-	  module will be called isp1760-hcd.
-
-config USB_ISP1760_PCI
-	bool "Support for the PCI bus"
-	depends on USB_ISP1760_HCD && PCI
-	---help---
-	  Enables support for the device present on the PCI bus.
-	  This should only be required if you happen to have the eval kit from
-	  NXP and you are going to test it.
-
-config USB_ISP1760_OF
-	bool "Support for the OF platform bus"
-	depends on USB_ISP1760_HCD && PPC_OF
-	---help---
-	  Enables support for the device present on the PowerPC
-	  OpenFirmware platform bus.
+	  module will be called isp1760.
 
 config USB_OHCI_HCD
 	tristate "OHCI HCD support"
 	depends on USB && USB_ARCH_HAS_OHCI
 	select ISP1301_OMAP if MACH_OMAP_H2 || MACH_OMAP_H3
-	select I2C if ARCH_PNX4008
+	select USB_OTG_UTILS if ARCH_OMAP
 	---help---
 	  The Open Host Controller Interface (OHCI) is a standard for accessing
 	  USB 1.1 host controller hardware.  It does more in hardware than Intel's
@@ -162,26 +354,27 @@ config USB_OHCI_HCD_PPC_SOC
 	  Enables support for the USB controller on the MPC52xx or
 	  STB03xxx processor chip.  If unsure, say Y.
 
-config USB_OHCI_HCD_PPC_OF
-	bool "OHCI support for PPC USB controller on OF platform bus"
-	depends on USB_OHCI_HCD && PPC_OF
-	default y
-	---help---
-	  Enables support for the USB controller PowerPC present on the
-	  OpenFirmware platform bus.
-
 config USB_OHCI_HCD_PPC_OF_BE
-	bool "Support big endian HC"
-	depends on USB_OHCI_HCD_PPC_OF
-	default y
+	bool "OHCI support for OF platform bus (big endian)"
+	depends on USB_OHCI_HCD && PPC_OF
 	select USB_OHCI_BIG_ENDIAN_DESC
 	select USB_OHCI_BIG_ENDIAN_MMIO
+	---help---
+	  Enables support for big-endian USB controllers present on the
+	  OpenFirmware platform bus.
 
 config USB_OHCI_HCD_PPC_OF_LE
-	bool "Support little endian HC"
-	depends on USB_OHCI_HCD_PPC_OF
-	default n
+	bool "OHCI support for OF platform bus (little endian)"
+	depends on USB_OHCI_HCD && PPC_OF
 	select USB_OHCI_LITTLE_ENDIAN
+	---help---
+	  Enables support for little-endian USB controllers present on the
+	  OpenFirmware platform bus.
+
+config USB_OHCI_HCD_PPC_OF
+	bool
+	depends on USB_OHCI_HCD && PPC_OF
+	default USB_OHCI_HCD_PPC_OF_BE || USB_OHCI_HCD_PPC_OF_LE
 
 config USB_OHCI_HCD_PCI
 	bool "OHCI support for PCI-bus USB controllers"
@@ -236,6 +429,23 @@ config USB_UHCI_HCD
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called uhci-hcd.
+
+#config USB_FHCI_HCD
+#	tristate "Freescale QE USB Host Controller support"
+#	depends on USB && OF_GPIO && QE_GPIO && QUICC_ENGINE
+#	select FSL_GTM
+#	select QE_USB
+#	help
+#	  This driver enables support for Freescale QE USB Host Controller
+#	  (as found on MPC8360 and MPC8323 processors), the driver supports
+#	  Full and Low Speed USB.
+
+#config FHCI_DEBUG
+#	bool "Freescale QE USB Host Controller debug support"
+#	depends on USB_FHCI_HCD && DEBUG_FS
+#	help
+#	  Say "y" to see some FHCI debug information and statistics
+#	  throught debugfs.
 
 config USB_U132_HCD
 	tristate "Elan U132 Adapter Host Controller"
@@ -301,7 +511,35 @@ config USB_R8A66597_HCD
 
 config SUPERH_ON_CHIP_R8A66597
 	boolean "Enable SuperH on-chip R8A66597 USB"
-	depends on USB_R8A66597_HCD && (CPU_SUBTYPE_SH7366 || CPU_SUBTYPE_SH7723)
+	depends on USB_R8A66597_HCD && (CPU_SUBTYPE_SH7366 || CPU_SUBTYPE_SH7723 || CPU_SUBTYPE_SH7724)
 	help
 	   This driver enables support for the on-chip R8A66597 in the
-	   SH7366 and SH7723 processors.
+	   SH7366, SH7723 and SH7724 processors.
+
+#config USB_WHCI_HCD
+#	tristate "Wireless USB Host Controller Interface (WHCI) driver (EXPERIMENTAL)"
+#	depends on EXPERIMENTAL
+#	depends on PCI && USB
+#	select USB_WUSB
+#	select UWB_WHCI
+#	help
+#	  A driver for PCI-based Wireless USB Host Controllers that are
+#	  compliant with the WHCI specification.
+#
+#	  To compile this driver a module, choose M here: the module
+#	  will be called "whci-hcd".
+
+#config USB_HWA_HCD
+#	tristate "Host Wire Adapter (HWA) driver (EXPERIMENTAL)"
+#	depends on EXPERIMENTAL
+#	depends on USB
+#	select USB_WUSB
+#	select UWB_HWA
+#	help
+#	  This driver enables you to connect Wireless USB devices to
+#	  your system using a Host Wire Adaptor USB dongle. This is an
+#	  UWB Radio Controller and WUSB Host Controller connected to
+#	  your machine via USB (specified in WUSB1.0).
+#
+#	  To compile this driver a module, choose M here: the module
+#	  will be called "hwa-hc".

@@ -48,6 +48,16 @@ config MMC_SDHCI_PCI
 
 	  If unsure, say N.
 
+config MMC_ESDHC
+	tristate "Enhanced Secure Digital Host Controller Interface support"
+	depends on PPC
+	help
+	  This select Freescale Enhanced SD Host Controller Interface.
+	  The controller is used in MPC837x and so on.
+	  If you have a MPC Platform with SD slot, say Y or M here.
+
+	  If unsure, say N.
+
 config MMC_RICOH_MMC
 	tristate "Ricoh MMC Controller Disabler  (EXPERIMENTAL)"
 	depends on MMC_SDHCI_PCI

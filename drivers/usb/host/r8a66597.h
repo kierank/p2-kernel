@@ -26,6 +26,12 @@
 #ifndef __R8A66597_H__
 #define __R8A66597_H__
 
+#if defined(CONFIG_SUPERH_ON_CHIP_R8A66597) && defined(CONFIG_HAVE_CLK)
+#include <linux/clk.h>
+#endif
+
+#include <linux/usb/r8a66597.h>
+
 #define SYSCFG0		0x00
 #define SYSCFG1		0x02
 #define SYSSTS0		0x04
@@ -481,7 +487,10 @@ struct r8a66597_root_hub {
 struct r8a66597 {
 	spinlock_t lock;
 	unsigned long reg;
-
+#if defined(CONFIG_SUPERH_ON_CHIP_R8A66597) && defined(CONFIG_HAVE_CLK)
+	struct clk *clk;
+#endif
+	struct r8a66597_platdata	*pdata;
 	struct r8a66597_device		device0;
 	struct r8a66597_root_hub	root_hub[R8A66597_MAX_ROOT_HUB];
 	struct list_head		pipe_queue[R8A66597_MAX_NUM_PIPE];
@@ -498,6 +507,9 @@ struct r8a66597 {
 
 	struct list_head child_device;
 	unsigned long child_connect_map[4];
+
+	unsigned bus_suspended:1;
+	unsigned irq_sense_low:1;
 };
 
 static inline struct r8a66597 *hcd_to_r8a66597(struct usb_hcd *hcd)
@@ -652,10 +664,36 @@ static inline void r8a66597_port_power(struct r8a66597 *r8a66597, int port,
 {
 	unsigned long dvstctr_reg = get_dvstctr_reg(port);
 
-	if (power)
-		r8a66597_bset(r8a66597, VBOUT, dvstctr_reg);
-	else
-		r8a66597_bclr(r8a66597, VBOUT, dvstctr_reg);
+	if (r8a66597->pdata->port_power) {
+		r8a66597->pdata->port_power(port, power);
+	} else {
+		if (power)
+			r8a66597_bset(r8a66597, VBOUT, dvstctr_reg);
+		else
+			r8a66597_bclr(r8a66597, VBOUT, dvstctr_reg);
+	}
+}
+
+static inline u16 get_xtal_from_pdata(struct r8a66597_platdata *pdata)
+{
+	u16 clock = 0;
+
+	switch (pdata->xtal) {
+	case R8A66597_PLATDATA_XTAL_12MHZ:
+		clock = XTAL12;
+		break;
+	case R8A66597_PLATDATA_XTAL_24MHZ:
+		clock = XTAL24;
+		break;
+	case R8A66597_PLATDATA_XTAL_48MHZ:
+		clock = XTAL48;
+		break;
+	default:
+		printk(KERN_ERR "r8a66597: platdata clock is wrong.\n");
+		break;
+	}
+
+	return clock;
 }
 
 #define get_pipectr_addr(pipenum)	(PIPE1CTR + (pipenum - 1) * 2)

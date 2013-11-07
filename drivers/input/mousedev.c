@@ -8,6 +8,7 @@
  * it under the terms of the GNU General Public License version 2 as published by
  * the Free Software Foundation.
  */
+/* $Id: mousedev.c 11407 2010-12-27 01:07:56Z Noguchi Isao $ */
 
 #define MOUSEDEV_MINOR_BASE	32
 #define MOUSEDEV_MINORS		32
@@ -25,6 +26,12 @@
 #ifdef CONFIG_INPUT_MOUSEDEV_PSAUX
 #include <linux/miscdevice.h>
 #endif
+
+/* Added by Panasonic, 2009/7/3 >>>>> */
+#ifdef CONFIG_INPUT_MOUSEDEV_PEVENT
+#include <linux/mousedev_user.h>
+#endif  /* CONFIG_INPUT_MOUSEDEV_PEVENT */
+/* <<<<< Added by Panasonic, 2009/7/3 */
 
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@ucw.cz>");
 MODULE_DESCRIPTION("Mouse (ExplorerPS/2) device interfaces");
@@ -54,7 +61,26 @@ struct mousedev_hw_data {
 	int x, y;
 	int abs_event;
 	unsigned long buttons;
+/* Added by Panasonic, 2010/9/13 >>>>> */
+  	bool bDial;
+/* Added by Panasonic, 2010/9/13 >>>>> */
 };
+
+/* Added by Panasonic, 2010/9/13,
+   Modified by Panasonic (SAV), 2010/11/8 ---> */
+enum mousedev_emul {
+	MOUSEDEV_EMUL_PS2=0,
+	MOUSEDEV_EMUL_IMPS,
+	MOUSEDEV_EMUL_EXPS,
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+	MOUSEDEV_EMUL_JOG,
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+};
+/* #ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT */
+/* static int devmode = MOUSEDEV_EMUL_PS2;  // mousedev emul mode(default:ps2) */
+/* #endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT */
+/* <--- Added by Panasonic, 2010/9/13,
+   Modified by Panasonic (SAV), 2010/11/8 */
 
 struct mousedev {
 	int exist;
@@ -76,17 +102,21 @@ struct mousedev {
 	int old_x[4], old_y[4];
 	int frac_dx, frac_dy;
 	unsigned long touch;
+
+/* Added by Panasonic, 2010/11/8 ---> */
+#ifdef CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE
+	enum mousedev_emul mode;
+#endif  /* CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE */
+/* <--- Added by Panasonic, 2010/11/8  */
 };
 
-enum mousedev_emul {
-	MOUSEDEV_EMUL_PS2,
-	MOUSEDEV_EMUL_IMPS,
-	MOUSEDEV_EMUL_EXPS
-};
 
 struct mousedev_motion {
 	int dx, dy, dz;
 	unsigned long buttons;
+/* Added by Panasonic, 2010/9/13 >>>>> */
+  	bool bDial;
+/* Added by Panasonic, 2010/9/13 >>>>> */
 };
 
 #define PACKET_QUEUE_LEN	16
@@ -103,12 +133,26 @@ struct mousedev_client {
 	signed char ps2[6];
 	unsigned char ready, buffer, bufsiz;
 	unsigned char imexseq, impsseq;
+/* Added by Panasonic (SAV), 2010/12/5 ---> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+    unsigned char jogseq;
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* <--- Added by Panasonic (SAV), 2010/12/5 */
+/* Added by Panasonic, 2010/11/8 --->  */
+#ifndef CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE
 	enum mousedev_emul mode;
+#endif  /* CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE */
+/* <--- Added by Panasonic, 2010/11/8  */
 	unsigned long last_buttons;
 };
 
 #define MOUSEDEV_SEQ_LEN	6
 
+/* Added by Panasonic (SAV), 2010/12/5 ---> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+static unsigned char mousedev_jog_seq[] = { 0xf3, 200, 0xf3, 50, 0xf3, 80 };
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* <--- Added by Panasonic (SAV), 2010/12/5 */
 static unsigned char mousedev_imps_seq[] = { 0xf3, 200, 0xf3, 100, 0xf3, 80 };
 static unsigned char mousedev_imex_seq[] = { 0xf3, 200, 0xf3, 200, 0xf3, 80 };
 
@@ -124,6 +168,26 @@ static void mixdev_close_devices(void);
 
 #define fx(i)  (mousedev->old_x[(mousedev->pkt_count - (i)) & 03])
 #define fy(i)  (mousedev->old_y[(mousedev->pkt_count - (i)) & 03])
+
+
+/* Added by Panasonic, 2010/11/8 ---> */
+static inline enum mousedev_emul get_emul_mode(struct mousedev_client *client) {
+#ifdef CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE
+    return client->mousedev->mode;
+#else   /* ! CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE */
+    return client->mode;
+#endif  /* CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE */
+}
+
+static inline void set_emul_mode(struct mousedev_client *client, enum mousedev_emul mode) {
+#ifdef CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE
+    client->mousedev->mode = mode;
+#else   /* ! CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE */
+    client->mode = mode;
+#endif  /* CONFIG_INPUT_MOUSEDEV_KEEP_EMUL_MODE */
+}
+/* <--- Added by Panasonic, 2010/11/8  */
+
 
 static void mousedev_touchpad_event(struct input_dev *dev,
 				    struct mousedev *mousedev,
@@ -203,6 +267,12 @@ static void mousedev_abs_event(struct input_dev *dev, struct mousedev *mousedev,
 static void mousedev_rel_event(struct mousedev *mousedev,
 				unsigned int code, int value)
 {
+/* Added by Panasonic, 2010/9/13 >>>>> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+  	mousedev->packet.bDial = false;
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* Added by Panasonic, 2010/9/13 >>>>> */
+
 	switch (code) {
 	case REL_X:
 		mousedev->packet.dx += value;
@@ -211,6 +281,19 @@ static void mousedev_rel_event(struct mousedev *mousedev,
 	case REL_Y:
 		mousedev->packet.dy -= value;
 		break;
+
+/* Added by Panasonic, 2010/9/13 >>>>> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+	case REL_DIAL:
+	  	// checking change value
+	  	if (value != fx(0)){
+		  	mousedev->packet.dx = (fx(0) - value);
+	  	}
+		fx(0) = value;
+		mousedev->packet.bDial = true;
+		break;
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* Added by Panasonic, 2010/9/13 >>>>> */
 
 	case REL_WHEEL:
 		mousedev->packet.dz -= value;
@@ -245,7 +328,17 @@ static void mousedev_key_event(struct mousedev *mousedev,
 	case BTN_4:
 	case BTN_EXTRA:		index = 4; break;
 
-	default:		return;
+/* Added by Panasonic, 2010/9/13 >>>>> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+        default:
+          if ((code > 0x10F) || (code < 0x100))
+                return;
+          index = code & 0xf;
+          break;
+#else
+	default:		return;	  
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* Added by Panasonic, 2010/9/13 >>>>> */
 	}
 
 	if (value) {
@@ -299,6 +392,12 @@ static void mousedev_notify_readers(struct mousedev *mousedev,
 		p->dz += packet->dz;
 		p->buttons = mousedev->packet.buttons;
 
+/* Added by Panasonic, 2010/9/13 >>>>> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+		p->bDial = packet->bDial;
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* Added by Panasonic, 2010/9/13 >>>>> */
+
 		if (p->dx || p->dy || p->dz ||
 		    p->buttons != client->last_buttons)
 			client->ready = 1;
@@ -347,6 +446,8 @@ static void mousedev_event(struct input_handle *handle,
 			   unsigned int type, unsigned int code, int value)
 {
 	struct mousedev *mousedev = handle->private;
+
+/*     printk(KERN_DEBUG "type=0x%02X, code=0x%08X, value=%d\n",type, code, value); */
 
 	switch (type) {
 
@@ -601,14 +702,37 @@ static void mousedev_packet(struct mousedev_client *client,
 {
 	struct mousedev_motion *p = &client->packets[client->tail];
 
+/* Added by Panasonic, 2010/9/13 >>>>> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+	ps2_data[0] = 0x8;
+	if (p->bDial && p->dx
+        && get_emul_mode(client)==MOUSEDEV_EMUL_JOG) { /* Modified by Panasonic (SAV), 2010/12/5 */
+	  	p->dz = mousedev_limit_delta(p->dx, 255);
+		ps2_data[0] = 0x0;
+		p->dx -= p->dx;
+	}
+	ps2_data[0] |= ((p->dx < 0) << 4) | ((p->dy < 0) << 5) | (p->buttons & 0x07);
+#else
 	ps2_data[0] = 0x08 |
 		((p->dx < 0) << 4) | ((p->dy < 0) << 5) | (p->buttons & 0x07);
+#endif
+/* Added by Panasonic, 2010/9/13 >>>>> */
 	ps2_data[1] = mousedev_limit_delta(p->dx, 127);
 	ps2_data[2] = mousedev_limit_delta(p->dy, 127);
 	p->dx -= ps2_data[1];
 	p->dy -= ps2_data[2];
 
-	switch (client->mode) {
+/* /\* Added by Panasonic, 2010/9/13 >>>>> *\/ */
+/* #ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT */
+/* 	if (devmode == MOUSEDEV_EMUL_JOG){ */
+/* 	  	client->mode = devmode; //overwrite mode */
+/* 	} */
+/* #endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT */
+/* /\* Added by Panasonic, 2010/9/13 >>>>> *\/ */
+
+/* Modified by Panasonic, 2010/11/8  */
+/* 	switch (client->mode) { */
+	switch (get_emul_mode(client)) {
 	case MOUSEDEV_EMUL_EXPS:
 		ps2_data[3] = mousedev_limit_delta(p->dz, 7);
 		p->dz -= ps2_data[3];
@@ -623,6 +747,22 @@ static void mousedev_packet(struct mousedev_client *client,
 		p->dz -= ps2_data[3];
 		client->bufsiz = 4;
 		break;
+
+/* Added by Panasonic, 2010/9/13 >>>>> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+	case MOUSEDEV_EMUL_JOG:
+	  	ps2_data[3] = p->dz;
+		if (!(ps2_data[0] & 0x8)){
+		  	// wheel event(1 or -1) check.
+		  	ps2_data[3] /= abs(ps2_data[3]);
+		}
+		p->dz -= p->dz;
+		ps2_data[4] = p->buttons & 0xff;
+		ps2_data[5] = (p->buttons & 0xff00) >> 8;
+	  	client->bufsiz = 6;
+	    	break;
+#endif // CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* Added by Panasonic, 2010/9/13 >>>>> */
 
 	case MOUSEDEV_EMUL_PS2:
 	default:
@@ -655,7 +795,17 @@ static void mousedev_generate_response(struct mousedev_client *client,
 		break;
 
 	case 0xf2: /* Get ID */
-		switch (client->mode) {
+/* /\* Added by Panasonic, 2010/9/13 >>>>> *\/ */
+/* #ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT */
+/* 	  	if (devmode == MOUSEDEV_EMUL_JOG){ */
+/* 		  	client->mode = MOUSEDEV_EMUL_JOG; */
+/* 		} */
+/* #endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT */
+/* /\* Added by Panasonic, 2010/9/13 >>>>> *\/ */
+
+/* Modified by Panasonic, 2010/11/8  */
+/* 		switch (client->mode) { */
+		switch (get_emul_mode(client)) {
 		case MOUSEDEV_EMUL_PS2:
 			client->ps2[1] = 0;
 			break;
@@ -665,6 +815,16 @@ static void mousedev_generate_response(struct mousedev_client *client,
 		case MOUSEDEV_EMUL_EXPS:
 			client->ps2[1] = 4;
 			break;
+/* Added by Panasonic, 2010/9/13
+   modified by Panasonic(SAV), 2010/11/8 ---> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+		case MOUSEDEV_EMUL_JOG:
+/* 		  	client->ps2[1] = 6; */
+		  	client->ps2[1] = 1;
+			break;
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* <--- Added by Panasonic, 2010/9/13,
+   modified by Panasonic(SAV), 2010/11/8 */
 		}
 		client->bufsiz = 2;
 		break;
@@ -676,7 +836,13 @@ static void mousedev_generate_response(struct mousedev_client *client,
 
 	case 0xff: /* Reset */
 		client->impsseq = client->imexseq = 0;
-		client->mode = MOUSEDEV_EMUL_PS2;
+/* Modified by Panasonic, 2010/11/8 ----> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+		client->jogseq = 0;/* Modified by Panasonic (SAV), 2010/11/5*/
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+		set_emul_mode(client,MOUSEDEV_EMUL_PS2);
+/* 		client->mode = MOUSEDEV_EMUL_PS2; */
+/* <--- Modified by Panasonic, 2010/11/8 */
 		client->ps2[1] = 0xaa; client->ps2[2] = 0x00;
 		client->bufsiz = 3;
 		break;
@@ -705,20 +871,36 @@ static ssize_t mousedev_write(struct file *file, const char __user *buffer,
 		if (c == mousedev_imex_seq[client->imexseq]) {
 			if (++client->imexseq == MOUSEDEV_SEQ_LEN) {
 				client->imexseq = 0;
-				client->mode = MOUSEDEV_EMUL_EXPS;
+/* Modified by Panasonic, 2010/11/8 */
+/* 				client->mode = MOUSEDEV_EMUL_EXPS; */
+				set_emul_mode(client, MOUSEDEV_EMUL_EXPS);
 			}
 		} else
 			client->imexseq = 0;
 
 		if (c == mousedev_imps_seq[client->impsseq]) {
 			if (++client->impsseq == MOUSEDEV_SEQ_LEN) {
-				client->impsseq = 0;
-				client->mode = MOUSEDEV_EMUL_IMPS;
+                client->impsseq = 0;
+/* Modified by Panasonic, 2010/11/8 */
+/* 				client->impsseq = 0; */
+				set_emul_mode(client, MOUSEDEV_EMUL_IMPS);
 			}
 		} else
 			client->impsseq = 0;
 
-		mousedev_generate_response(client, c);
+/* Added by Panasonic, 2010/11/8 ---> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+		if (c == mousedev_jog_seq[client->jogseq]) {
+			if (++client->jogseq == MOUSEDEV_SEQ_LEN) {
+				client->jogseq = 0;
+				set_emul_mode(client, MOUSEDEV_EMUL_JOG);
+			}
+		} else
+			client->jogseq = 0;
+#endif //CONFIG_INPUT_MOUSEDEV_JOGEVENT
+/* <--- Added by Panasonic, 2010/11/8 */
+
+        mousedev_generate_response(client, c);
 
 		spin_unlock_irq(&client->packet_lock);
 	}
@@ -781,6 +963,138 @@ static unsigned int mousedev_poll(struct file *file, poll_table *wait)
 		(mousedev->exist ? 0 : (POLLHUP | POLLERR));
 }
 
+/* /\* Added by Panasonic, 2009/7/3 >>>>> *\/ */
+/* /\* Added by Panasonic, 2010/9/13 >>>>> *\/ */
+/* #if defined(CONFIG_INPUT_MOUSEDEV_PEVENT) || defined(CONFIG_INPUT_MOUSEDEV_JOGEVENT) */
+
+static int mousedev_ioctl (struct inode *inode, struct file *file,
+                           unsigned int cmd, unsigned long arg)
+{
+    int retval = 0;
+/*     unsigned int minor = iminor(inode); */
+    struct mousedev_client *client = NULL;
+    struct mousedev *mousedev= NULL;
+    struct input_handle *handle = NULL;
+
+    client = (struct mousedev_client *) file->private_data;
+    if(NULL==client){
+        retval=-ENODEV;
+        goto fail;
+    }
+
+    mousedev = client->mousedev;
+    if (NULL==mousedev){
+        retval=-ENODEV;
+        goto fail;
+    }
+
+    handle = &mousedev->handle;
+
+
+    switch(cmd) {
+
+#ifdef CONFIG_INPUT_MOUSEDEV_PEVENT
+    case MOUSEDEV_IOC_PEVENT_MOVE:
+
+        {
+            struct mousedev_pevent_move param;
+
+            /* get parameter. */
+            if( copy_from_user( (void *)&param, (void *)arg, sizeof(struct mousedev_pevent_move) ) ) {
+                printk(KERN_ERR "mousedev: copy_from_user failed at MOUSEDEV_IOC_PEVENT_MOVE\n" );
+                retval = -EFAULT ;
+                goto fail;
+            }
+
+            /* delta-X */
+            if(param.dx!=0)
+                mousedev_event(handle,EV_REL,REL_X,param.dx);
+
+            /* delta-Y */
+            if(param.dy!=0)
+                mousedev_event(handle,EV_REL,REL_Y,param.dy);
+
+            /* delta-Z */
+            if(param.dz!=0)
+                mousedev_event(handle,EV_REL,REL_WHEEL,param.dz);
+
+            /* syn */
+            mousedev_event(handle,EV_SYN,SYN_REPORT,0);
+
+        }
+
+        break;
+
+    case MOUSEDEV_IOC_PEVENT_BTN:
+
+        {
+            struct mousedev_pevent_button param;
+
+            /* get parameter. */
+            if( copy_from_user( (void *)&param, (void *)arg, sizeof(struct mousedev_pevent_button) ) ) {
+                printk(KERN_ERR "mousedev: copy_from_user failed at MOUSEDEV_IOC_PEVENT_BTN\n" );
+                retval=-EFAULT ;
+                goto fail;
+            }
+
+            /* event */
+            mousedev_event(handle,EV_KEY, BTN_0 + param.btn, param.evt?1:0);
+
+            /* syn */
+            mousedev_event(handle,EV_SYN,SYN_REPORT,0);
+
+        }
+
+        break;
+#endif  /* CONFIG_INPUT_MOUSEDEV_PEVENT */
+
+
+/* Added by Panasonic, 2010/11/5 ---> */
+#ifdef CONFIG_INPUT_MOUSEDEV_JOGEVENT
+    case MOUSEDEV_IOC_EMUL_MODE:
+/*     case MOUSEDEV_IOC_JOGMODE: */
+/*         devmode = arg == 1 ? MOUSEDEV_EMUL_JOG : MOUSEDEV_EMUL_PS2; */
+/*       	printk(KERN_INFO "mousedev : jogmode(%d)\n", devmode); */
+        switch (arg){
+        case MOUSEDEV_EMUL_MODE_PS2:
+            set_emul_mode(client, MOUSEDEV_EMUL_PS2);
+            break;
+        case MOUSEDEV_EMUL_MODE_JOG:
+            set_emul_mode(client, MOUSEDEV_EMUL_JOG);
+            break;
+        case MOUSEDEV_EMUL_MODE_IMPS:
+            set_emul_mode(client, MOUSEDEV_EMUL_IMPS);
+            break;
+        case MOUSEDEV_EMUL_MODE_EXPS:
+            set_emul_mode(client, MOUSEDEV_EMUL_EXPS);
+            break;
+        default:
+            pr_err("mousedev : invalid mode = %ld : %s(%d)\n",
+                   arg,   __FILE__, __LINE__);
+            retval = -EINVAL;
+            goto fail;
+        }
+        client->impsseq = client->imexseq = client->jogseq = 0;
+ 
+        break;
+#endif  /* CONFIG_INPUT_MOUSEDEV_JOGEVENT */
+/* <--- Added by Panasonic, 2010/11/5 */
+
+    default:
+        printk(KERN_ERR "mousedev : unknown ioctl command = %d : %s(%d)\n",cmd,  __FILE__, __LINE__);
+        retval = -ENOTTY;
+        goto fail;
+    }
+
+ fail:
+    return retval;
+}
+
+
+/* #endif  /\* CONFIG_INPUT_MOUSEDEV_PEVENT || CONFIG_INPUT_MOUSEDEV_JOGEVENT *\/ */
+/* /\* <<<<< Added by Panasonic, 2009/7/3 *\/ */
+/* /\* Added by Panasonic, 2010/9/13 >>>>> *\/ */
+
 static const struct file_operations mousedev_fops = {
 	.owner =	THIS_MODULE,
 	.read =		mousedev_read,
@@ -789,6 +1103,11 @@ static const struct file_operations mousedev_fops = {
 	.open =		mousedev_open,
 	.release =	mousedev_release,
 	.fasync =	mousedev_fasync,
+/* Added by Panasonic, 2009/7/3 >>>>> */
+#ifdef CONFIG_INPUT_MOUSEDEV_PEVENT
+    .ioctl  =   mousedev_ioctl,
+#endif  /* CONFIG_INPUT_MOUSEDEV_PEVENT */
+/* <<<<< Added by Panasonic, 2009/7/3 */
 };
 
 static int mousedev_install_chrdev(struct mousedev *mousedev)

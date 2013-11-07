@@ -1,0 +1,41 @@
+# DM(Domestic Memory) driver configurations
+
+config DM
+        bool "DM(Domestic Memory) Driver"
+
+menu "DM options"
+	depends on DM
+
+config DM_BLOCKUNIT_NUM
+	int "The number of block size units"
+	default 256
+	---help---
+	  This parameter is the number of block size units.
+	  The total memory size for DM is defined by
+	    DM_MALLOC_SIZE = DM_BLOCKUNIT_SIZE(=0x8000) * [this parameter].
+	  Default number is 256(=8MB).
+
+config DM_MALLOC_MAX_SIZE
+	hex "The maximum size of DM malloc"
+	default 0x00200000
+	---help---
+	  This parameter is the maximum size of DM malloc.
+	  Default size is 0x00200000(=2MB).
+
+config DM_ORDER
+	int "The order of DM page size"
+	default 10
+	---help---
+	  This parameter "MAX_ORDER" depends on the kernel and the architecture.
+	  In SH4 on Linux 2.4, PAGE_SIZE=4096B MAX_ORDER=9.
+	  In MPC83xx on Linux 2.6, PAGE_SIZE=4096B MAX_ORDER=10.
+
+config DM_FREELIST_NUM
+	int "The number of DM freelist"
+	default 20
+	---help---
+	  When you set size of "free list table" on K,
+	  continuous blocks more than K belong to the Kth list.
+	  In this system, we prepare list for 1-19, and for more than 20.
+
+endmenu

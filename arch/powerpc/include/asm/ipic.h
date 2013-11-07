@@ -53,6 +53,19 @@
 #define IPIC_SCVCR	0x60	/* System Critical Interrupt Vector Register */
 #define IPIC_SMVCR	0x64	/* System Management Interrupt Vector Register */
 
+/* IPIC MSI register (for 837x and 8315) */
+#define IPIC_MSIR0	0xC0	/* Msg Shared Interrupt Reg 0 */
+#define IPIC_MSIR1	0xC4	/* Msg Shared Interrupt Reg 1 */
+#define IPIC_MSIR2	0xC8	/* Msg Shared Interrupt Reg 2 */
+#define IPIC_MSIR3	0xCC	/* Msg Shared Interrupt Reg 3 */
+#define IPIC_MSIR4	0xD0	/* Msg Shared Interrupt Reg 4 */
+#define IPIC_MSIR5	0xD4	/* Msg Shared Interrupt Reg 5 */
+#define IPIC_MSIR6	0xD8	/* Msg Shared Interrupt Reg 6 */
+#define IPIC_MSIR7	0xDC	/* Msg Shared Interrupt Reg 7 */
+#define IPIC_MSIMR	0xF0	/* Msg Shared Interrupt Mask Reg */
+#define IPIC_MSISR	0xF4	/* Msg Shared Interrupt Status Reg */
+#define IPIC_MSIIR	0xF8	/* Msg Shared Interrupt Index Reg */
+
 enum ipic_prio_grp {
 	IPIC_INT_GRP_A = IPIC_SIPRR_A,
 	IPIC_INT_GRP_D = IPIC_SIPRR_D,
@@ -68,6 +81,41 @@ enum ipic_mcp_irq {
 	IPIC_MCP_PCI2 = 6,
 	IPIC_MCP_MU   = 7,
 };
+
+struct ipic_83xx_s {
+	u32 sicfr;
+	u32 sivcr;
+	u32 sipnr_h;
+	u32 sipnr_l;
+	u32 siprr_a;
+	u32 siprr_b;
+	u32 siprr_c;
+	u32 siprr_d;
+	u32 simsr_h;
+	u32 simsr_l;
+	u32 sicnr;
+	u32 sepnr;
+	u32 smprr_a;
+	u32 smprr_b;
+	u32 semsr;
+	u32 secnr;
+	u32 sersr;
+	u32 sermr;
+	u32 sercr;
+	u32 sepcr;
+ 	u32 sifcr_h;
+ 	u32 sifcr_l;
+ 	u32 sefcr;
+ 	u32 serfr;
+ 	u32 scvcr;
+ 	u32 smvcr;
+ 	u8 res0[0x58];
+ 	u32 msir[8];
+ 	u8 res1[0x10];
+ 	u32 msimr;
+ 	u32 msisr;
+ 	u32 msiir;
+ };
 
 extern int ipic_set_priority(unsigned int irq, unsigned int priority);
 extern void ipic_set_highest_priority(unsigned int irq);

@@ -1,3 +1,5 @@
+/* $Id: gpiolib.c 11201 2010-12-15 23:57:24Z Noguchi Isao $ */
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/irq.h>
@@ -110,7 +112,7 @@ static int gpiochip_find_base(int ngpio)
 		}
 	}
 
-	if (gpio_is_valid(base))
+	if (likely( gpio_is_valid(base) ))
 		pr_debug("%s: found new base at %d\n", __func__, base);
 	return base;
 }
@@ -132,7 +134,7 @@ int __init gpiochip_reserve(int start, int ngpio)
 	unsigned long flags;
 	int i;
 
-	if (!gpio_is_valid(start) || !gpio_is_valid(start + ngpio - 1))
+	if (unlikely(!gpio_is_valid(start) || !gpio_is_valid(start + ngpio - 1)))
 		return -EINVAL;
 
 	spin_lock_irqsave(&gpio_lock, flags);
@@ -211,8 +213,17 @@ static ssize_t gpio_direction_store(struct device *dev,
 		status = -EIO;
 	else if (sysfs_streq(buf, "high"))
 		status = gpio_direction_output(gpio, 1);
+#if 0  /* Original code */
 	else if (sysfs_streq(buf, "out") || sysfs_streq(buf, "low"))
 		status = gpio_direction_output(gpio, 0);
+#else  /* 2010/5/24, modified by Panasonic ===> */
+	else if (sysfs_streq(buf, "out")){
+        int value = gpio_get_value(gpio)?1:0;
+		status = gpio_direction_output(gpio, value);
+    }
+	else if (sysfs_streq(buf, "low"))
+		status = gpio_direction_output(gpio, 0);
+#endif  /* <== 2010/5/24, modified by Panasonic */
 	else if (sysfs_streq(buf, "in"))
 		status = gpio_direction_input(gpio);
 	else
@@ -376,7 +387,7 @@ static ssize_t unexport_store(struct class *class, const char *buf, size_t len)
 	status = -EINVAL;
 
 	/* reject bogus commands (gpio_unexport ignores them) */
-	if (!gpio_is_valid(gpio))
+	if (unlikely(!gpio_is_valid(gpio)))
 		goto done;
 
 	/* No extra locking here; FLAG_SYSFS just signifies that the
@@ -434,8 +445,16 @@ int gpio_export(unsigned gpio, bool direction_may_change)
 		return -ENOENT;
 	}
 
-	if (!gpio_is_valid(gpio))
+	if (unlikely(!gpio_is_valid(gpio)))
 		goto done;
+
+    /* 2010/3/16, Added by Panasonic >>>> */
+    if(unlikely(!gpio_is_valid_port(gpio))){
+        status = -EPERM;
+        pr_err("ERROR: gpio%d is NOT valid\n",gpio);
+		goto done;
+    }
+    /* <<<< 2010/3/16, Added by Panasonic */
 
 	mutex_lock(&sysfs_lock);
 
@@ -496,7 +515,7 @@ void gpio_unexport(unsigned gpio)
 	struct gpio_desc	*desc;
 	int			status = -EINVAL;
 
-	if (!gpio_is_valid(gpio))
+	if (unlikely(!gpio_is_valid(gpio)))
 		goto done;
 
 	mutex_lock(&sysfs_lock);
@@ -656,8 +675,8 @@ int gpiochip_add(struct gpio_chip *chip)
 	unsigned	id;
 	int		base = chip->base;
 
-	if ((!gpio_is_valid(base) || !gpio_is_valid(base + chip->ngpio - 1))
-			&& base >= 0) {
+	if ( unlikely((!gpio_is_valid(base) || !gpio_is_valid(base + chip->ngpio - 1))
+                  && base >= 0) ) {
 		status = -EINVAL;
 		goto fail;
 	}
@@ -684,6 +703,15 @@ int gpiochip_add(struct gpio_chip *chip)
 		for (id = base; id < base + chip->ngpio; id++) {
 			gpio_desc[id].chip = chip;
 
+#if 1 /* 2010/3/17, modified by panasonic */
+            if(chip->direction){
+                gpio_desc[id].flags = chip->direction(chip,id-base)? (1 << FLAG_IS_OUT): 0;
+            } else {
+                gpio_desc[id].flags = !chip->direction_input
+                    ? (1 << FLAG_IS_OUT)
+                    : 0;
+            }
+#else /* original */
 			/* REVISIT:  most hardware initializes GPIOs as
 			 * inputs (often with pullups enabled) so power
 			 * usage is minimized.  Linux code should set the
@@ -693,11 +721,22 @@ int gpiochip_add(struct gpio_chip *chip)
 			gpio_desc[id].flags = !chip->direction_input
 				? (1 << FLAG_IS_OUT)
 				: 0;
+#endif  /* 1 */
+
 		}
 	}
 
 unlock:
 	spin_unlock_irqrestore(&gpio_lock, flags);
+
+/* 2009/12/25,added by Panasonic >>>> */
+#ifdef CONFIG_GPIO_IRQ
+    /* initialize interrupts functions */
+    if(status == 0 && chip->can_irq && chip->init_irq)
+        status = (*chip->init_irq)(chip);
+#endif  /* CONFIG_GPIO_IRQ */
+/* <<<< 2009/12/25,added by Panasonic */
+
 	if (status == 0)
 		status = gpiochip_export(chip);
 fail:
@@ -722,6 +761,17 @@ int gpiochip_remove(struct gpio_chip *chip)
 	int		status = 0;
 	unsigned	id;
 
+/* 2009/12/25,added by Panasonic >>>> */
+#ifdef CONFIG_GPIO_IRQ
+    /* initialize interrupts functions */
+    if(chip->can_irq && chip->clean_irq){
+        status = (*chip->clean_irq)(chip);
+        if(status != 0)
+            goto fail;
+    }
+#endif  /* CONFIG_GPIO_IRQ */
+/* <<<< 2009/12/25,added by Panasonic */
+
 	spin_lock_irqsave(&gpio_lock, flags);
 
 	for (id = chip->base; id < chip->base + chip->ngpio; id++) {
@@ -740,6 +790,10 @@ int gpiochip_remove(struct gpio_chip *chip)
 	if (status == 0)
 		gpiochip_unexport(chip);
 
+/* 2009/12/25,added by Panasonic >>>> */
+ fail:
+/* <<<< 2009/12/25,added by Panasonic */
+
 	return status;
 }
 EXPORT_SYMBOL_GPL(gpiochip_remove);
@@ -757,7 +811,7 @@ int gpio_request(unsigned gpio, const char *label)
 
 	spin_lock_irqsave(&gpio_lock, flags);
 
-	if (!gpio_is_valid(gpio))
+	if (unlikely( !gpio_is_valid(gpio) ))
 		goto done;
 	desc = &gpio_desc[gpio];
 	if (desc->chip == NULL)
@@ -792,7 +846,7 @@ void gpio_free(unsigned gpio)
 	unsigned long		flags;
 	struct gpio_desc	*desc;
 
-	if (!gpio_is_valid(gpio)) {
+	if (unlikely( !gpio_is_valid(gpio) )) {
 		WARN_ON(extra_checks);
 		return;
 	}
@@ -830,7 +884,7 @@ const char *gpiochip_is_requested(struct gpio_chip *chip, unsigned offset)
 {
 	unsigned gpio = chip->base + offset;
 
-	if (!gpio_is_valid(gpio) || gpio_desc[gpio].chip != chip)
+	if (unlikely( !gpio_is_valid(gpio) || gpio_desc[gpio].chip != chip ))
 		return NULL;
 	if (test_bit(FLAG_REQUESTED, &gpio_desc[gpio].flags) == 0)
 		return NULL;
@@ -861,10 +915,10 @@ int gpio_direction_input(unsigned gpio)
 
 	spin_lock_irqsave(&gpio_lock, flags);
 
-	if (!gpio_is_valid(gpio))
+	if (unlikely( !gpio_is_valid(gpio) ))
 		goto fail;
 	chip = desc->chip;
-	if (!chip || !chip->get || !chip->direction_input)
+	if (unlikely(!chip) || !chip->get || !chip->direction_input)
 		goto fail;
 	gpio -= chip->base;
 	if (gpio >= chip->ngpio)
@@ -899,10 +953,10 @@ int gpio_direction_output(unsigned gpio, int value)
 
 	spin_lock_irqsave(&gpio_lock, flags);
 
-	if (!gpio_is_valid(gpio))
+	if (unlikely( !gpio_is_valid(gpio) ))
 		goto fail;
 	chip = desc->chip;
-	if (!chip || !chip->set || !chip->direction_output)
+	if (unlikely(!chip) || !chip->set || !chip->direction_output)
 		goto fail;
 	gpio -= chip->base;
 	if (gpio >= chip->ngpio)
@@ -965,8 +1019,15 @@ int __gpio_get_value(unsigned gpio)
 	struct gpio_chip	*chip;
 
 	chip = gpio_to_chip(gpio);
+    /* 2010/1/8, added by Panasonic >>>> */
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        return -ENODEV;
+    }
+    /* <<<< 2010/1/8, added by Panasonic */
 	WARN_ON(extra_checks && chip->can_sleep);
-	return chip->get ? chip->get(chip, gpio - chip->base) : 0;
+	return likely(chip->get)? chip->get(chip, gpio - chip->base): 0;
 }
 EXPORT_SYMBOL_GPL(__gpio_get_value);
 
@@ -984,8 +1045,16 @@ void __gpio_set_value(unsigned gpio, int value)
 	struct gpio_chip	*chip;
 
 	chip = gpio_to_chip(gpio);
+    /* 2010/1/8, added by Panasonic >>>> */
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        return;
+    }
+    /* <<<< 2010/1/8, added by Panasonic */
 	WARN_ON(extra_checks && chip->can_sleep);
-	chip->set(chip, gpio - chip->base, value);
+    if(likely(chip->set))
+        chip->set(chip, gpio - chip->base, value);
 }
 EXPORT_SYMBOL_GPL(__gpio_set_value);
 
@@ -1003,11 +1072,62 @@ int __gpio_cansleep(unsigned gpio)
 
 	/* only call this on GPIOs that are valid! */
 	chip = gpio_to_chip(gpio);
-
+    /* 2010/1/8, added by Panasonic >>>> */
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        return -ENODEV;
+    }
+    /* <<<< 2010/1/8, added by Panasonic */
 	return chip->can_sleep;
 }
 EXPORT_SYMBOL_GPL(__gpio_cansleep);
 
+
+/* 2010/12/15, added by Panasonic (SAV) ---> */
+/**
+ *  gpio_is_valid_port() - check whether port is available
+ *
+ *  if port is valid then retun non-0, else 0
+ */
+void gpio_opendrain(unsigned gpio, int value)
+{
+	struct gpio_chip	*chip;
+
+	chip = gpio_to_chip(gpio);
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        return;
+    }
+    if(likely(chip->opendrain))
+        chip->opendrain(chip, gpio - chip->base, value);
+}
+EXPORT_SYMBOL_GPL(gpio_opendrain);
+/* <--- 2010/12/15, added by Panasonic (SAV) */
+
+
+/* 2010/1/8, added by Panasonic >>>> */
+/**
+ *  gpio_is_valid_port() - check whether port is available
+ *
+ *  if port is valid then retun non-0, else 0
+ */
+int gpio_is_valid_port(int number)
+{
+	struct gpio_chip *chip;
+    if(unlikely(!gpio_is_valid(number) ))
+        return 0;
+    chip = gpio_to_chip((unsigned)number);
+    if(chip==NULL)
+        return 0;
+    if(chip->is_valid)
+        return chip->is_valid(chip, number - chip->base);
+    else
+        return 0;
+}
+EXPORT_SYMBOL_GPL(gpio_is_valid_port);
+/* <<<< 2010/1/8, added by Panasonic */
 
 
 /* There's no value in making it easy to inline GPIO calls that may sleep.
@@ -1020,6 +1140,13 @@ int gpio_get_value_cansleep(unsigned gpio)
 
 	might_sleep_if(extra_checks);
 	chip = gpio_to_chip(gpio);
+    /* 2010/1/8, added by Panasonic >>>> */
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        return -ENODEV;
+    }
+    /* <<<< 2010/1/8, added by Panasonic */
 	return chip->get ? chip->get(chip, gpio - chip->base) : 0;
 }
 EXPORT_SYMBOL_GPL(gpio_get_value_cansleep);
@@ -1030,6 +1157,13 @@ void gpio_set_value_cansleep(unsigned gpio, int value)
 
 	might_sleep_if(extra_checks);
 	chip = gpio_to_chip(gpio);
+    /* 2010/1/8, added by Panasonic >>>> */
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        return;
+    }
+    /* <<<< 2010/1/8, added by Panasonic */
 	chip->set(chip, gpio - chip->base, value);
 }
 EXPORT_SYMBOL_GPL(gpio_set_value_cansleep);
@@ -1166,3 +1300,206 @@ static int __init gpiolib_debugfs_init(void)
 subsys_initcall(gpiolib_debugfs_init);
 
 #endif	/* DEBUG_FS */
+/* 2009/12/25,added by Panasonic >>>> */
+#ifdef CONFIG_GPIO_IRQ
+
+/*
+ * optional GPIO interrupts support calls
+ */
+
+
+int gpio_is_valid_irq(unsigned gpio)
+{
+	struct gpio_chip *chip = NULL;
+
+    if(unlikely( !gpio_is_valid(gpio) ))
+        return 0;
+
+    chip = gpio_to_chip(gpio);
+    if(unlikely(!chip))
+        return 0;
+
+    return chip->can_irq? 1: 0;
+}
+EXPORT_SYMBOL(gpio_is_valid_irq);
+
+int gpio_request_irq(unsigned gpio,
+                     void (*handler)(unsigned,void*),void *data)
+{
+    int retval=0;
+	struct gpio_chip *chip = NULL;
+
+    if(unlikely( !gpio_is_valid(gpio) || !handler )){
+        pr_err("ERROR: invalid parameters gpio=%d, handler=%p @ %s(%d)\n",
+               gpio, handler, __FILE__, __LINE__);
+        retval = -EINVAL;
+        goto fail;
+    }
+
+    chip = gpio_to_chip(gpio);
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+    if(chip->can_irq && chip->request_irq){
+        retval = chip->request_irq(chip, gpio - chip->base, handler, data);
+        if(retval<0){
+            pr_err("ERROR: can NOT register IRQ handler for GPIO-%d  @ %s(%d)\n",
+                   gpio, __FILE__, __LINE__);
+            goto fail;
+        }
+    }
+
+ fail:
+    /* complete */
+    return retval;
+}
+EXPORT_SYMBOL(gpio_request_irq);
+
+int gpio_free_irq(unsigned gpio)
+{
+    int retval=0;
+	struct gpio_chip *chip = NULL;
+
+    if(unlikely( !gpio_is_valid(gpio) )){
+        pr_err("ERROR: invalid parameters gpio=%d @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -EINVAL;
+        goto fail;
+    }
+
+    chip = gpio_to_chip(gpio);
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+    if(chip->can_irq && !chip->free_irq){
+        retval = chip->free_irq(chip, gpio - chip->base);
+        if(retval<0){
+            pr_err("ERROR: can NOT unregister IRQ handler for GPIO-%d  @ %s(%d)\n",
+                   gpio, __FILE__, __LINE__);
+            goto fail;
+        }
+    }
+
+ fail:
+    /* complete */
+    return retval;
+}
+EXPORT_SYMBOL(gpio_free_irq);
+
+int gpio_enable_irq(unsigned gpio)
+{
+    int retval=0;
+	struct gpio_chip *chip = NULL;
+
+    if(unlikely (!gpio_is_valid(gpio) )){
+        pr_err("ERROR: invalid parameters gpio=%d @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -EINVAL;
+        goto fail;
+    }
+
+    chip = gpio_to_chip(gpio);
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+    if(chip->can_irq && chip->enable_irq){
+        retval = chip->enable_irq(chip, gpio - chip->base);
+        if(retval<0){
+            pr_err("ERROR: can NOT enable IRQ event for GPIO-%d  @ %s(%d)\n",
+                   gpio, __FILE__, __LINE__);
+            goto fail;
+        }
+    }
+
+ fail:
+    /* complete */
+    return retval;
+}
+EXPORT_SYMBOL(gpio_enable_irq);
+
+int gpio_disable_irq(unsigned gpio)
+{
+    int retval=0;
+	struct gpio_chip *chip = NULL;
+
+    if(unlikely( !gpio_is_valid(gpio) )){
+        pr_err("ERROR: invalid parameters gpio=%d @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -EINVAL;
+        goto fail;
+    }
+
+    chip = gpio_to_chip(gpio);
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+    if(chip->can_irq && chip->disable_irq){
+        retval = chip->disable_irq(chip, gpio - chip->base);
+        if(retval<0){
+            pr_err("ERROR: can NOT disaable IRQ event for GPIO-%d  @ %s(%d)\n",
+                   gpio, __FILE__, __LINE__);
+            goto fail;
+        }
+    }
+
+ fail:
+    /* complete */
+    return retval;
+}
+EXPORT_SYMBOL(gpio_disable_irq);
+
+int gpio_is_enabled_irq(unsigned gpio)
+{
+    int retval=0;
+	struct gpio_chip *chip = NULL;
+
+    if(unlikely( !gpio_is_valid(gpio) )){
+        pr_err("ERROR: invalid parameters gpio=%d @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -EINVAL;
+        goto fail;
+    }
+
+    chip = gpio_to_chip(gpio);
+    if(unlikely(!chip)){
+        pr_err("ERROR: GPIO-%d is NOT found @ %s(%d)\n",
+               gpio, __FILE__, __LINE__);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+    if(chip->can_irq && chip->is_enabled_irq){
+        retval = chip->is_enabled_irq(chip, gpio - chip->base);
+        if(retval<0){
+            pr_err("ERROR: can NOT check IRQ event for GPIO-%d  @ %s(%d)\n",
+                   gpio, __FILE__, __LINE__);
+            goto fail;
+        }
+    }
+
+ fail:
+    /* complete */
+    return retval;
+}
+
+EXPORT_SYMBOL(gpio_is_enabled_irq);
+/* <<<< 2009/12/25,added by Panasonic */
+
+
+#endif  /* CONFIG_GPIO_IRQ */

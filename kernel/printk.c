@@ -1210,8 +1210,10 @@ void register_console(struct console *console)
 		unregister_console(bootconsole);
 		console->flags &= ~CON_PRINTBUFFER;
 	} else {
+#if ! defined(CONFIG_DISABLE_INIT_MESSAGE) /* Added by Panasonic fot fast bootup */
 		printk(KERN_INFO "console [%s%d] enabled\n",
 		       console->name, console->index);
+#endif /* ! CONFIG_DISABLE_INIT_MESSAGE */
 	}
 
 	/*

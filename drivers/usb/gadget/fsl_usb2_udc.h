@@ -1,6 +1,8 @@
 /*
  * Freescale USB device/endpoint management registers
  */
+/* $Id: fsl_usb2_udc.h 14816 2011-06-08 01:02:14Z Noguchi Isao $ */
+
 #ifndef __FSL_USB2_UDC_H
 #define __FSL_USB2_UDC_H
 
@@ -32,7 +34,28 @@ struct usb_dr_device {
 	u8 res5[4];
 	u32 burstsize;		/* Master Interface Data Burst Size Register */
 	u32 txttfilltuning;	/* Transmit FIFO Tuning Controls Register */
+/* 2009/10/13, Modified by panasonic >>>>  */
+#ifdef CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT
+	u8 res6a[8];
+#define ULPIWU      (1<<31)
+#define ULPIRUN     (1<<30)
+#define ULPIRW      (1<<29)
+#define ULPISS      (1<<27)
+#define ULPIPORT_MSK    (7<<24)
+#define ULPIPORT(n) ((n)<<24)
+#define ULPIADDR_MSK    (0xFF<<16)
+#define ULPIADDR(a) ((a)<<16)
+#define ULPIDATRD_SHIFT 8
+#define ULPIDATRD_MSK   (0xff<<ULPIDATRD_SHIFT)
+#define ULPIDATWR_SHIFT 0
+#define ULPIDATWR_MSK   (0xff<<ULPIDATWR_SHIFT)
+#define ULPIDATWR(n)    ((n)<<ULPIDATWR_SHIFT)
+	u32 ulpivp;                /* ULPI Register Access */
+	u8 res6b[12];
+#else                   /* !CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT */
 	u8 res6[24];
+#endif                  /* CONFIG_USB_EHCI_FSL_ULPI_PHY_SUPPORT */
+/* <<<< 2009/10/13, Modified by panasonic  */
 	u32 configflag;		/* Configure Flag Register */
 	u32 portsc1;		/* Port 1 Status and Control Register */
 	u8 res7[28];
@@ -506,6 +529,14 @@ struct fsl_udc {
 	u8 device_address;	/* Device USB address */
 
 	struct completion *done;	/* to make sure release() is done */
+
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+#ifdef CONFIG_USB_GADGET_UDCDEV
+    struct timer_list connect_timer;
+    u32 last_connection;
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
+
 };
 
 /*-------------------------------------------------------------------------*/

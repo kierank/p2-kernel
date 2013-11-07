@@ -14,6 +14,7 @@
  * option) any later version.
  *
  */
+/* $Id: sata_fsl.c 7336 2010-06-03 04:40:50Z Noguchi Isao $ */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -25,6 +26,13 @@
 #include <asm/io.h>
 #include <linux/of_platform.h>
 
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+#include <linux/gpio.h>
+#include <linux/of_gpio.h>
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
+
 /* Controller information */
 enum {
 	SATA_FSL_QUEUE_DEPTH	= 16,
@@ -32,9 +40,17 @@ enum {
 	SATA_FSL_MAX_PRD_USABLE	= SATA_FSL_MAX_PRD - 1,
 	SATA_FSL_MAX_PRD_DIRECT	= 16,	/* Direct PRDT entries */
 
+/* P2PF TARGET DEPENDENT CODE (K277) -->	*/
+/* Modified by Panasonic : 2009/03/03		*/
+#ifdef CONFIG_SATA_PMP
 	SATA_FSL_HOST_FLAGS	= (ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY |
 				ATA_FLAG_MMIO | ATA_FLAG_PIO_DMA |
 				ATA_FLAG_PMP | ATA_FLAG_NCQ),
+#else
+	SATA_FSL_HOST_FLAGS = (ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY |
+				ATA_FLAG_MMIO | ATA_FLAG_PIO_DMA | ATA_FLAG_NCQ),
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)	*/
 
 	SATA_FSL_MAX_CMDS	= SATA_FSL_QUEUE_DEPTH,
 	SATA_FSL_CMD_HDR_SIZE	= 16,	/* 4 DWORDS */
@@ -175,6 +191,10 @@ enum {
  */
 enum {
 	TRANSCFG = 0,
+/* 2010/4/1, added by Panasonic >>>> */
+#define SHIFT_RX_WATER_MARK 0
+#define MASK_RX_WATER_MARK  (0x1F<<SHIFT_RX_WATER_MARK)
+/* <<<< 2010/3/30, added by Panasonic */
 	TRANSSTATUS = 4,
 	LINKCFG = 8,
 	LINKCFG1 = 0xC,
@@ -183,6 +203,13 @@ enum {
 	LINKSTATUS1 = 0x18,
 	PHYCTRLCFG = 0x1C,
 	COMMANDSTAT = 0x20,
+
+/* 2010/3/30, added by Panasonic >>>> */
+    PHYCTRLCFG2 = 0x2C0,        /* MPC8315 only */
+#define SHIFT_TX_AMP_CTRL   6
+#define MASK_TX_AMP_CTRL    (3<<SHIFT_TX_AMP_CTRL)
+#define BIT_PHY_RESET   (1<<31)
+/* <<<< 2010/3/30, added by Panasonic */
 };
 
 /* PHY (link-layer) configuration control */
@@ -246,6 +273,25 @@ struct sata_fsl_port_priv {
 	dma_addr_t cmdentry_paddr;
 };
 
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+
+/*
+ * special recovery data
+ */
+struct eh_special_recovery_info {
+    enum {
+        NONE=0,
+        GPIO,
+        PHYRST,
+    } method;
+    unsigned int gpio_port; 
+    int gpio_pol;              /* 0: active-LOW, non-0: active-High */
+};
+
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
+
 /*
  * ata_port->host_set private data
  */
@@ -254,7 +300,46 @@ struct sata_fsl_host_priv {
 	void __iomem *ssr_base;
 	void __iomem *csr_base;
 	int irq;
+
+/* 2010/3/30, added by Panasonic >>>> */
+#ifdef CONFIG_SATA_FSL_TX_AMP_CTRL
+    int tx_amp_cntrl;
+#define TX_AMP_CTRL_NONE    0   /* no control */
+#define TX_AMP_CTRL_6       1   /* +6% */
+#define TX_AMP_CTRL_10      2   /* +10% */
+#define TX_AMP_CTRL_16      3   /* +16% */
+#endif /* CONFIG_SATA_FSL_TX_AMP_CTRL */
+/* <<<< 2010/3/30, added by Panasonic */
+
+/* 2010/4/1, added by Panasonic >>>> */
+#ifdef CONFIG_SATA_FSL_RX_FIFO_SIZE
+    int rx_buff_size;
+#endif  /* CONFIG_SATA_FSL_RX_FIFO_SIZE */
+/* <<<< 2010/4/1, added by Panasonic */
+
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+    struct eh_special_recovery_info rinfo;
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
+
+/* 2010/06/03, added by Panasonic ---> */
+#ifdef CONFIG_SATA_FSL_LIMIT_SPEED
+    enum limit_speed {
+        LIMIT_SPEED_NOTING = 0, /* no limitting */
+        LIMIT_SPEED_GEN1 = 1,   /* 1,5 Gbps */
+        LIMIT_SPEED_GEN2 = 2,   /* 3.0 Gbps */
+    } limit_speed;
+#endif  /* CONFIG_SATA_FSL_LIMIT_SPEED */
+/* <--- 2010/06/03, added by Panasonic */
+
 };
+
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+static struct sata_fsl_host_priv *primary_host_priv=NULL;
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
 
 static inline unsigned int sata_fsl_tag(unsigned int tag,
 					void __iomem *hcr_base)
@@ -395,7 +480,14 @@ static void sata_fsl_qc_prep(struct ata_queued_cmd *qc)
 	cd = (struct command_desc *)pp->cmdentry + tag;
 	cd_paddr = pp->cmdentry_paddr + tag * SATA_FSL_CMD_DESC_SIZE;
 
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/03       */
+#ifdef CONFIG_SATA_PMP
 	ata_tf_to_fis(&qc->tf, qc->dev->link->pmp, 1, (u8 *) &cd->cfis);
+#else
+	ata_tf_to_fis(&qc->tf, 0, 1, (u8 *) &cd->cfis);
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 
 	VPRINTK("Dumping cfis : 0x%x, 0x%x, 0x%x\n",
 		cd->cfis[0], cd->cfis[1], cd->cfis[2]);
@@ -438,7 +530,12 @@ static unsigned int sata_fsl_qc_issue(struct ata_queued_cmd *qc)
 		ioread32(CA + hcr_base),
 		ioread32(CE + hcr_base), ioread32(CC + hcr_base));
 
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/03       */
+#ifdef CONFIG_SATA_PMP
 	iowrite32(qc->dev->link->pmp, CQPMP + hcr_base);
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 
 	/* Simply queue command to the controller/device */
 	iowrite32(1 << tag, CQ + hcr_base);
@@ -640,6 +737,21 @@ static int sata_fsl_port_start(struct ata_port *ap)
 	VPRINTK("HControl = 0x%x\n", ioread32(hcr_base + HCONTROL));
 	VPRINTK("CHBA  = 0x%x\n", ioread32(hcr_base + CHBA));
 
+/* 2010/06/03, added by Panasonic ---> */
+#ifdef CONFIG_SATA_FSL_LIMIT_SPEED
+
+	sata_fsl_scr_read(ap, SCR_CONTROL, &temp);
+	temp &= ~(0xF << 4);
+	temp |= (host_priv->limit_speed << 4);
+	sata_fsl_scr_write(ap, SCR_CONTROL, temp);
+
+	sata_fsl_scr_read(ap, SCR_CONTROL, &temp);
+	dev_printk(KERN_WARNING, dev, "scr_control, speed limited to %x\n",
+			temp);
+
+#endif  /* CONFIG_SATA_FSL_LIMIT_SPEED */
+/* <--- 2010/06/03, added by Panasonic */
+
 #ifdef CONFIG_MPC8315_DS
 	/*
 	 * Workaround for 8315DS board 3gbps link-up issue,
@@ -722,6 +834,7 @@ static int sata_fsl_softreset(struct ata_link *link, unsigned int *class,
 	struct sata_fsl_host_priv *host_priv = ap->host->private_data;
 	void __iomem *hcr_base = host_priv->hcr_base;
 	int pmp = sata_srst_pmp(link);
+
 	u32 temp;
 	struct ata_taskfile tf;
 	u8 *cfis;
@@ -730,9 +843,13 @@ static int sata_fsl_softreset(struct ata_link *link, unsigned int *class,
 	unsigned long start_jiffies;
 
 	DPRINTK("in xx_softreset\n");
-
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/03       */
+#ifdef CONFIG_SATA_PMP
 	if (pmp != SATA_PMP_CTRL_PORT)
 		goto issue_srst;
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 
 try_offline_again:
 	/*
@@ -777,7 +894,13 @@ try_offline_again:
 
 	temp = ioread32(hcr_base + HCONTROL);
 	temp |= (HCONTROL_ONLINE_PHY_RST | HCONTROL_SNOOP_ENABLE);
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/03       */
+#ifdef CONFIG_SATA_PMP
 	temp |= HCONTROL_PMP_ATTACHED;
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
+
 	iowrite32(temp, hcr_base + HCONTROL);
 
 	temp = ata_wait_register(hcr_base + HSTATUS, ONLINE, 0, 1, 500);
@@ -800,7 +923,7 @@ try_offline_again:
 
 	temp = ata_wait_register(hcr_base + HSTATUS, 0xFF, 0, 1, 500);
 	if ((!(temp & 0x10)) || ata_link_offline(link)) {
-		ata_port_printk(ap, KERN_WARNING,
+		ata_port_printk(ap, KERN_ERR,  /* Modified by Panaosonic for fast bootup */
 				"No Device OR PHYRDY change,Hstatus = 0x%x\n",
 				ioread32(hcr_base + HSTATUS));
 		*class = ATA_DEV_NONE;
@@ -831,8 +954,12 @@ try_offline_again:
 	 * and device presence has been detected, therefore if we have
 	 * reached here, we can send a command to the target device
 	 */
-
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/03       */
+#ifdef CONFIG_SATA_PMP
 issue_srst:
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 	DPRINTK("Sending SRST/device reset\n");
 
 	ata_tf_init(link->device, &tf);
@@ -891,8 +1018,14 @@ issue_srst:
 	tf.ctl &= ~ATA_SRST;	/* 2nd H2D Ctl. register FIS */
 	ata_tf_to_fis(&tf, pmp, 0, cfis);
 
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/03       */
+#ifdef CONFIG_SATA_PMP
 	if (pmp != SATA_PMP_CTRL_PORT)
 		iowrite32(pmp, CQPMP + hcr_base);
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
+
 	iowrite32(1, CQ + hcr_base);
 	msleep(150);		/* ?? */
 
@@ -1205,6 +1338,7 @@ static int sata_fsl_init_controller(struct ata_host *host)
 {
 	struct sata_fsl_host_priv *host_priv = host->private_data;
 	void __iomem *hcr_base = host_priv->hcr_base;
+    void __iomem *csr_base = host_priv->csr_base; /* 2010/3/30, added by Panasonic */
 	u32 temp;
 
 	/*
@@ -1230,6 +1364,26 @@ static int sata_fsl_init_controller(struct ata_host *host)
 	iowrite32(0x00000FFFF, hcr_base + CE);
 	iowrite32(0x00000FFFF, hcr_base + DE);
 
+/* 2010/3/30, added by Panasonic >>>> */
+#ifdef CONFIG_SATA_FSL_TX_AMP_CTRL
+    /* set Tx amplitude control */
+    temp = ioread32be(csr_base + PHYCTRLCFG2);
+    temp = (temp&~MASK_TX_AMP_CTRL)|(host_priv->tx_amp_cntrl<<SHIFT_TX_AMP_CTRL);
+    iowrite32be(temp,csr_base + PHYCTRLCFG2);
+    //    pr_err("************* COMMANDSTAT=0x%08X\n",ioread32be(csr_base + PHYCTRLCFG2));
+#endif  /* CONFIG_SATA_FSL_TX_AMP_CTRL */
+/* <<<< 2010/3/30, added by Panasonic */
+
+/* 2010/4/1, added by Panasonic >>>> */
+#ifdef CONFIG_SATA_FSL_RX_FIFO_SIZE
+    /* set Tx amplitude control */
+    temp = ioread32(csr_base + TRANSCFG);
+    temp = (temp&~MASK_RX_WATER_MARK)|(host_priv->rx_buff_size<<SHIFT_RX_WATER_MARK);
+    iowrite32(temp,csr_base + TRANSCFG);
+    //    pr_err("************* TRANSCFG=0x%08X\n",ioread32(csr_base + TRANSCFG));
+#endif  /* CONFIG_SATA_FSL_RX_FIFO_SIZE */
+/* <<<< 2010/4/1, added by Panasonic */
+
 	/*
 	 * host controller will be brought on-line, during xx_port_start()
 	 * callback, that should also initiate the OOB, COMINIT sequence
@@ -1250,6 +1404,109 @@ static struct scsi_host_template sata_fsl_sht = {
 	.sg_tablesize = SATA_FSL_MAX_PRD_USABLE,
 	.dma_boundary = ATA_DMA_BOUNDARY,
 };
+
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+
+/*
+ *  @retval :   non-0   : recovery is done
+ *              0       : nothing to do
+ */
+static int sata_fsl_eh_special_recovery(struct ata_port *ap)
+{
+	struct sata_fsl_host_priv *host_priv = ap->host->private_data;
+    struct eh_special_recovery_info *info = &(host_priv->rinfo);
+
+    switch(info->method) {
+    case GPIO:
+
+        {
+            int new, last;
+            int max_repeat=10,repeat,interval_sec=1;
+
+            for(repeat=0; repeat<max_repeat; repeat++){
+                if(!gpio_request(info->gpio_port,__FUNCTION__))
+                    break;
+                set_current_state(TASK_UNINTERRUPTIBLE);
+                schedule_timeout(interval_sec*HZ);
+            }
+            if(repeat==max_repeat){
+                pr_err("### ERROR: too busy gpio-port(%d)\n",info->gpio_port);
+                return 0;
+            }
+
+            last = gpio_get_value(info->gpio_port);
+            if(last<0){
+                gpio_free(info->gpio_port);
+                return 0;
+            }
+            last = last?1:0;
+            new= info->gpio_pol?1:0;
+
+            pr_info("### PORT(%d): %d ==> %d\n",info->gpio_port, last, new);
+            gpio_set_value(info->gpio_port, new);
+
+            pr_info("### WAIT 1 seconds \n");
+            set_current_state(TASK_UNINTERRUPTIBLE);
+            schedule_timeout(1*HZ);
+
+            pr_info("### PORT(%d): %d ==> %d\n",info->gpio_port, new, last);
+            gpio_set_value(info->gpio_port, last);
+
+            pr_info("### WAIT 2 seconds \n");
+            set_current_state(TASK_UNINTERRUPTIBLE);
+            schedule_timeout(2*HZ);
+
+            gpio_free(info->gpio_port);
+        }
+
+        break;
+        
+    case PHYRST:
+
+        if(!primary_host_priv){
+            pr_warning(" *** WARNING: unknown primary host @%s(%s)\n",
+                       __FUNCTION__, __FILE__);
+            return 0;           /* nothing to do */
+        }else{
+            void __iomem *csr_base = primary_host_priv->csr_base;
+            u32 temp;
+
+            pr_info("### PHYCTRLCFG2 = 0x%08x\n",ioread32be(csr_base + PHYCTRLCFG2));
+            temp = ioread32be(csr_base + PHYCTRLCFG2);
+            pr_info("### PHY_RESET -> ON\n");
+            temp |= BIT_PHY_RESET;
+            iowrite32be(temp,csr_base + PHYCTRLCFG2);
+
+            pr_info("### WAIT 1 seconds \n");
+            set_current_state(TASK_UNINTERRUPTIBLE);
+            schedule_timeout(HZ);
+            
+            pr_info("### PHYCTRLCFG2 = 0x%08x\n",ioread32be(csr_base + PHYCTRLCFG2));
+            temp = ioread32be(csr_base + PHYCTRLCFG2);
+            pr_info("### PHY_RESET -> OFF\n");
+            temp &= ~BIT_PHY_RESET;
+            iowrite32be(temp,csr_base + PHYCTRLCFG2);
+            
+            pr_info("### WAIT 2 seconds \n");
+            set_current_state(TASK_UNINTERRUPTIBLE);
+            schedule_timeout(2*HZ);
+        }
+
+        break;
+
+    case NONE:
+    default:
+        /* nothing to do */
+        return 0; 
+    }
+
+    /* special recovery is done */
+    return 1;
+}
+
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
 
 static struct ata_port_operations sata_fsl_ops = {
 	.inherits		= &sata_pmp_port_ops,
@@ -1274,6 +1531,13 @@ static struct ata_port_operations sata_fsl_ops = {
 
 	.pmp_attach = sata_fsl_pmp_attach,
 	.pmp_detach = sata_fsl_pmp_detach,
+
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+    .eh_special_recovery = sata_fsl_eh_special_recovery,
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
+
 };
 
 static const struct ata_port_info sata_fsl_port_info[] = {
@@ -1328,6 +1592,158 @@ static int sata_fsl_probe(struct of_device *ofdev,
 	}
 	host_priv->irq = irq;
 
+#ifdef CONFIG_SATA_FSL_EXTENSION
+/* 2010/3/30, added by Panasonic >>>> */
+    if(ofdev->node!=NULL){
+        const void *prop;
+
+#ifdef CONFIG_SATA_FSL_TX_AMP_CTRL
+        /* Tx amplitude control */
+        if(of_device_is_compatible(ofdev->node, "fsl,mpc8315-sata")){
+            prop = of_get_property(ofdev->node, "tx-amp-ctrl", NULL);
+            if(!prop) {
+                DPRINTK("tx-amp-ctrl is not defined, so not contorol TX_AMP\n");
+                host_priv->tx_amp_cntrl=TX_AMP_CTRL_NONE;
+            } else {
+                u32 value = *(const u32 *)prop;
+                switch(value){
+                case 6:
+                    host_priv->tx_amp_cntrl=TX_AMP_CTRL_6;
+                    DPRINTK("tx-amp-ctrl is +6%\n");
+                    break;
+                case 10:
+                    host_priv->tx_amp_cntrl=TX_AMP_CTRL_10;
+                    DPRINTK("tx-amp-ctrl is +10%\n");
+                    break;
+                case 16:
+                    host_priv->tx_amp_cntrl=TX_AMP_CTRL_16;
+                    DPRINTK("tx-amp-ctrl is +16%\n");
+                    break;
+                default:
+                    dev_printk(KERN_ERR, &ofdev->dev, "invalid tx-amp-cntrl = %d\n",value);
+                    retval = -EINVAL;
+                    goto error_exit_with_cleanup;
+                }
+            }
+            //        pr_err("********** tx_amp_cntrl=%d\n",host_priv->tx_amp_cntrl);
+        }
+#endif  /* CONFIG_SATA_FSL_TX_AMP_CTRL */
+
+
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+
+        if(of_get_property(ofdev->node, "primary-port", NULL))
+            primary_host_priv = host_priv;
+
+        prop = of_get_property(ofdev->node, "special-recovery", NULL);
+        if(!prop)
+            host_priv->rinfo.method = NONE;
+        else if(!strcmp((const char*)prop, "gpio")) {
+            int port,pol;
+            const u32 *prop_gpio;
+            u32 len;
+            host_priv->rinfo.method = GPIO;
+            prop_gpio = of_get_property(ofdev->node, "recovery-gpio", &len);
+            len /= sizeof(u32);
+            if(!prop_gpio||len<2){
+                dev_printk(KERN_ERR, &ofdev->dev,
+                           "NOT found \"recovery-gpio\" property or too few cells in this property\n");
+                retval = -EINVAL;
+                goto error_exit_with_cleanup;
+            }
+            port = of_get_gpio(ofdev->node,prop_gpio[0]);
+            if(port<0){
+                dev_printk(KERN_ERR, &ofdev->dev,
+                           "NOT found gpio port\n");
+                retval = port;
+                goto error_exit_with_cleanup;
+            }
+            pol = prop_gpio[1]?1:0;
+            host_priv->rinfo.gpio_port = port;
+            host_priv->rinfo.gpio_pol = pol;
+        } else  if(!strcmp((const char*)prop, "phy-reset"))
+            host_priv->rinfo.method = PHYRST;
+        else {
+            dev_printk(KERN_ERR, &ofdev->dev,
+                       "invalid value : special-recovery=\"%s\"\n", (const char*)prop );
+            retval = -EINVAL;
+            goto error_exit_with_cleanup;
+        }
+/*         pr_err("********* special-recovery=%s\n", */
+/*                (host_priv->rinfo.method == NONE)? "NONE"  */
+/*                : ((host_priv->rinfo.method == GPIO)? "GPIO":"PHYRST") ); */
+/*         if(host_priv->rinfo.method == GPIO){ */
+/*             pr_err("********* port=%d, pol=%d\n", */
+/*                    host_priv->rinfo.gpio_port, */
+/*                    host_priv->rinfo.gpio_pol ); */
+/*         } */
+
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
+
+/* 2010/3/30, added by Panasonic >>>> */
+#ifdef CONFIG_SATA_FSL_RX_FIFO_SIZE
+        prop = of_get_property(ofdev->node, "rx-fifo-size", NULL);
+        if(!prop) {
+            DPRINTK("rx-fifo-size is not defined\n");
+            host_priv->rx_buff_size = 22; /* default */
+        } else {
+            u32 value = *(const u32 *)prop;
+            if((value)>58){     /* check over max size */
+                dev_printk(KERN_ERR, &ofdev->dev, "invalid rx-fifo-size = %d\n",value);
+                retval = -EINVAL;
+                goto error_exit_with_cleanup;
+            }
+            host_priv->rx_buff_size = value;
+        }
+        //        pr_err("********** rx_buff_size=%d\n",host_priv->rx_buff_size);
+#endif  /* CONFIG_SATA_FSL_RX_FIFO_SIZE */
+/* <<<< 2010/3/30, added by Panasonic */
+
+    }
+
+
+/* 2010/06/03, added by Panasonic ---> */
+#ifdef CONFIG_SATA_FSL_LIMIT_SPEED
+
+#ifdef CONFIG_SATA_FSL_LIMIT_SPEED_OF
+
+    if(ofdev->node!=NULL){
+        const void *prop = of_get_property(ofdev->node, "limit-speed", NULL);
+        if(!prop)
+            host_priv->limit_speed = LIMIT_SPEED_NOTING;
+        else if(!strcmp((const char*)prop, "gen1")) 
+            host_priv->limit_speed = LIMIT_SPEED_GEN1;
+        else if(!strcmp((const char*)prop, "gen2")) 
+            host_priv->limit_speed = LIMIT_SPEED_GEN2;
+        else {
+            dev_printk(KERN_ERR, &ofdev->dev,
+                       "invalid value : limit-speed=\"%s\"\n", (const char*)prop );
+            retval = -EINVAL;
+            goto error_exit_with_cleanup;
+        }
+    }
+
+#else  /* !CONFIG_SATA_FSL_LIMIT_SPEED_OF */
+
+#if defined(CONFIG_SATA_FSL_LIMIT_SPEED_GEN1)
+    host_priv->limit_speed = LIMIT_SPEED_GEN1;
+#elif defined(CONFIG_SATA_FSL_LIMIT_SPEED_GEN2)
+    host_priv->limit_speed = LIMIT_SPEED_GEN2;
+#else  /* SATA_FSL_NON_LIMIT_SPEED */
+    host_priv->limit_speed = LIMIT_SPEED_NOTING;
+#endif  /* CONFIG_SATA_FSL_LIMIT_SPEED_GEN? */
+
+#endif  /* CONFIG_SATA_FSL_LIMIT_SPEED_OF */
+
+#endif  /* CONFIG_SATA_FSL_LIMIT_SPEED */
+/* <--- 2010/06/03, added by Panasonic */
+
+
+/* <<<< 2010/3/30, added by Panasonic */
+#endif  /* CONFIG_SATA_FSL_EXTENSION */
+
 	/* allocate host structure */
 	host = ata_host_alloc_pinfo(&ofdev->dev, ppi, SATA_FSL_MAX_PORTS);
 
@@ -1375,6 +1791,32 @@ static int sata_fsl_remove(struct of_device *ofdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM
+static int sata_fsl_suspend(struct of_device *ofdev, pm_message_t mesg)
+{
+	struct ata_host *host = dev_get_drvdata(&ofdev->dev);
+
+	return ata_host_suspend(host, mesg);
+}
+
+static int sata_fsl_resume(struct of_device *ofdev)
+{
+	struct ata_host *host = dev_get_drvdata(&ofdev->dev);
+	int ret;
+
+	ret = sata_fsl_init_controller(host);
+	if (ret) {
+		dev_printk(KERN_ERR, &ofdev->dev,
+			"Error initialize hardware\n");
+		return ret;
+	}
+
+	ata_host_resume(host);
+
+	return 0;
+}
+#endif /* CONFIG_PM */
+
 static struct of_device_id fsl_sata_match[] = {
 	{
 		.compatible = "fsl,pq-sata",
@@ -1389,6 +1831,10 @@ static struct of_platform_driver fsl_sata_driver = {
 	.match_table	= fsl_sata_match,
 	.probe		= sata_fsl_probe,
 	.remove		= sata_fsl_remove,
+#ifdef CONFIG_PM
+	.suspend = sata_fsl_suspend,
+	.resume = sata_fsl_resume,
+#endif
 };
 
 static int __init sata_fsl_init(void)

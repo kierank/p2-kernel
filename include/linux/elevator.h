@@ -30,6 +30,14 @@ typedef void (elevator_deactivate_req_fn) (struct request_queue *, struct reques
 typedef void *(elevator_init_fn) (struct request_queue *);
 typedef void (elevator_exit_fn) (elevator_t *);
 
+/* Added by Panasonic for RT --> */
+typedef int (elevator_ready_fn) (struct request_queue *);
+typedef void (elevator_force_dispatch_fn) (struct request_queue *, int data);
+/* <-- Added by Panasonic for RT */
+
+/* Added by Panasonic for delayproc */
+typedef void (elevator_force_delayproc_fn) (struct request_queue *);
+
 struct elevator_ops
 {
 	elevator_merge_fn *elevator_merge_fn;
@@ -55,6 +63,15 @@ struct elevator_ops
 
 	elevator_init_fn *elevator_init_fn;
 	elevator_exit_fn *elevator_exit_fn;
+
+/* Added by Panasonic for RT --> */
+	elevator_ready_fn *elevator_ready_fn;
+	elevator_force_dispatch_fn *elevator_force_dispatch_fn;
+/* <-- Added by Panasonic for RT */
+
+/* Added by Panasonic for delayproc */
+	elevator_force_delayproc_fn *elevator_force_delayproc_fn;
+
 	void (*trim)(struct io_context *);
 };
 

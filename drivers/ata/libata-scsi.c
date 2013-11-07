@@ -32,6 +32,7 @@
  *  - http://www.t13.org/
  *
  */
+/* $Id: libata-scsi.c 6953 2010-05-18 07:50:14Z Noguchi Isao $ */
 
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
@@ -43,6 +44,12 @@
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_tcq.h>
 #include <scsi/scsi_transport.h>
+/* 2010/5/18, added by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+#include <scsi/scsi_ioctl.h>
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <== 2010/5/18, added by Panasonic */
+
 #include <linux/libata.h>
 #include <linux/hdreg.h>
 #include <linux/uaccess.h>
@@ -539,6 +546,33 @@ int ata_task_ioctl(struct scsi_device *scsidev, void __user *arg)
 	return rc;
 }
 
+/* 2010/5/18, modified by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+int ata_get_devinfo(struct scsi_device *dev, void *devinfo)
+{
+    struct scsi_ioctl_ata_info *info
+        = (struct scsi_ioctl_ata_info *)devinfo;
+    struct ata_port *ap = ata_shost_to_port(dev->host);
+    struct ata_device *atadev = ata_scsi_find_dev(ap, dev);
+
+    if(!info||!dev)
+        return -EINVAL;
+
+    if(!ap||!atadev){
+        return -ENODEV;
+    }
+
+    info->print_id = ap->print_id;
+    info->devno = atadev->devno;
+
+    return 0;
+}
+
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <== 2010/5/18, modified by Panasonic */
+
+
 int ata_scsi_ioctl(struct scsi_device *scsidev, int cmd, void __user *arg)
 {
 	int val = -EINVAL, rc = -EINVAL;
@@ -568,6 +602,34 @@ int ata_scsi_ioctl(struct scsi_device *scsidev, int cmd, void __user *arg)
 		if (!capable(CAP_SYS_ADMIN) || !capable(CAP_SYS_RAWIO))
 			return -EACCES;
 		return ata_task_ioctl(scsidev, arg);
+
+/* 2010/5/18, added by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+    case SCSI_IOCTL_GET_HOSTTYPE:
+        return SCSI_HOSTTYPE_SATA;
+
+    case SCSI_IOCTL_GET_DEVINFO:
+        if(arg==NULL){
+            pr_err("[ata] ERROR: \"arg\" is NULL pointer\n");
+            return -EINVAL;
+        }
+        if(!access_ok(VERIFY_WRITE, arg, sizeof(struct scsi_ioctl_ata_info))){
+            pr_err("[ata] ERROR: Can't accsess the argument..\n");
+            return -EFAULT;
+        }
+        {
+            struct scsi_ioctl_ata_info info;
+            int retval = ata_get_devinfo(scsidev, (void *)&info);
+            if(retval)
+                return retval;
+            __copy_to_user((struct scsi_ioctl_ata_info *)arg, &info,
+                           sizeof(struct scsi_ioctl_ata_info));
+        }
+        return 0;
+
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <== 2010/5/18, added by Panasonic */
 
 	default:
 		rc = -ENOTTY;

@@ -1111,7 +1111,10 @@ static int __make_request(struct request_queue *q, struct bio *bio)
 	 * certain limit bounced to low memory (ie for highmem, or even
 	 * ISA dma in theory)
 	 */
-	blk_queue_bounce(q, &bio);
+	if(!bio_drct(bio)) /* Modified by Panasonic for RT */
+	  {
+	    blk_queue_bounce(q, &bio);
+	  }
 
 	barrier = bio_barrier(bio);
 	if (unlikely(barrier) && (q->next_ordered == QUEUE_ORDERED_NONE)) {
@@ -1134,6 +1137,12 @@ static int __make_request(struct request_queue *q, struct bio *bio)
 
 		blk_add_trace_bio(q, bio, BLK_TA_BACKMERGE);
 
+		if(sync) /* Added by Panasonic for RT */
+		{
+			if(q->elevator->ops->elevator_force_dispatch_fn != NULL)
+				req->cmd_flags |= REQ_RW_SYNC;
+		}
+		
 		req->biotail->bi_next = bio;
 		req->biotail = bio;
 		req->nr_sectors = req->hard_nr_sectors += nr_sectors;
@@ -1151,6 +1160,12 @@ static int __make_request(struct request_queue *q, struct bio *bio)
 
 		blk_add_trace_bio(q, bio, BLK_TA_FRONTMERGE);
 
+		if(sync) /* Added by Panasonic for RT */
+		{
+			if(q->elevator->ops->elevator_force_dispatch_fn != NULL)
+				req->cmd_flags |= REQ_RW_SYNC;
+		}
+					
 		bio->bi_next = req->bio;
 		req->bio = bio;
 
@@ -1182,6 +1197,47 @@ get_rq:
 	 * rq allocator and io schedulers.
 	 */
 	rw_flags = bio_data_dir(bio);
+
+	/* Panasonic Original : Check DRCT/RT flags */
+	if(bio_rt(bio))
+	  {
+	    rw_flags |= REQ_RT;
+	  }
+
+	if(bio_drct(bio))
+	  {
+	    rw_flags |= REQ_DRCT;
+	  }
+
+	if(bio_seq(bio))
+	  {
+	    rw_flags |= REQ_SEQ;
+	  }
+
+	if(bio_fat(bio))
+	  {
+	    rw_flags |= REQ_FAT;
+	  }
+
+	if(bio_dirent(bio))
+	  {
+	    rw_flags |= REQ_DIRENT;
+	  }
+	/* End of Panasonic original part */
+
+	/* Modified by Panasonic (SAV), 2009-sep-28 */
+	if(bio_fsinfo(bio))
+		rw_flags |= REQ_FSINFO;
+	if(bio_av_data(bio))
+		rw_flags |= REQ_AV_DATA;
+	if(bio_fs_data(bio))
+		rw_flags |= REQ_FS_DATA;
+	/*------------------------------------------*/
+	/* Added by Panasonic for delayproc */
+	if(bio_mi(bio))
+		rw_flags |= REQ_MI;
+	/* -------- */
+	
 	if (sync)
 		rw_flags |= REQ_RW_SYNC;
 
@@ -1535,8 +1591,15 @@ static int __end_that_request_first(struct request *req, int error,
 {
 	int total_bytes, bio_nbytes, next_idx = 0;
 	struct bio *bio;
-
+	int __error = 0; /* Added by Panasonic for DWM */
+	
 	blk_add_trace_rq(req->q, req, BLK_TA_COMPLETE);
+
+	/* Added by Panasonic for DWM */
+	if (req->errors && !error)
+		__error = req->errors;
+	else
+		__error = error;
 
 	/*
 	 * for a REQ_BLOCK_PC request, we want to carry any eventual
@@ -1546,10 +1609,14 @@ static int __end_that_request_first(struct request *req, int error,
 		req->errors = 0;
 
 	if (error && (blk_fs_request(req) && !(req->cmd_flags & REQ_QUIET))) {
-		printk(KERN_ERR "end_request: I/O error, dev %s, sector %llu\n",
-				req->rq_disk ? req->rq_disk->disk_name : "?",
-				(unsigned long long)req->sector);
+	  /* Modified by Panasonic for reducing error messages. */
+		printk(KERN_ERR "[EIO]%llu(%s)\n",
+		       (unsigned long long)req->sector,
+			req->rq_disk ? req->rq_disk->disk_name : "?");
 	}
+
+	/* Added by Panasonic for DWM */
+	error = __error;
 
 	if (blk_fs_request(req) && req->rq_disk) {
 		struct hd_struct *part = get_part(req->rq_disk, req->sector);

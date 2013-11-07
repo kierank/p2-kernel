@@ -40,6 +40,14 @@ config IOSCHED_CFQ
 	  working environment, suitable for desktop systems.
 	  This is the default I/O scheduler.
 
+config IOSCHED_P2IOFilter
+	tristate "I/O scheduler for P2Card"
+	default n
+	---help---
+	  The p2IoFileter is the I/O scheduler specialized for P2Card.
+	  You cannot select this scheduler with other block device drivers.
+	  It's because this scheduler needs some parameters of P2Card.
+
 choice
 	prompt "Default I/O scheduler"
 	default DEFAULT_CFQ

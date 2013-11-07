@@ -46,8 +46,13 @@ static int fsync_buffers_list(spinlock_t *lock, struct list_head *list);
 
 #define BH_ENTRY(list) list_entry((list), struct buffer_head, b_assoc_buffers)
 
+#ifndef CONFIG_KGDB /* Mofidied by Panasonic for KGDB */
 inline void
 init_buffer(struct buffer_head *bh, bh_end_io_t *handler, void *private)
+#else
+void
+init_buffer(struct buffer_head *bh, bh_end_io_t *handler, void *private)
+#endif /* CONFIG_KGDB */
 {
 	bh->b_end_io = handler;
 	bh->b_private = private;
@@ -104,9 +109,10 @@ static void buffer_io_error(struct buffer_head *bh)
 {
 	char b[BDEVNAME_SIZE];
 
-	printk(KERN_ERR "Buffer I/O error on device %s, logical block %Lu\n",
-			bdevname(bh->b_bdev, b),
-			(unsigned long long)bh->b_blocknr);
+	/* Modified by Panasonic for reducing error messages. */
+	printk(KERN_ERR "[BIO]%Lu(%s)\n",
+		(unsigned long long)bh->b_blocknr,
+		bdevname(bh->b_bdev, b));
 }
 
 /*
@@ -140,16 +146,17 @@ void end_buffer_read_sync(struct buffer_head *bh, int uptodate)
 
 void end_buffer_write_sync(struct buffer_head *bh, int uptodate)
 {
-	char b[BDEVNAME_SIZE];
+/* 	char b[BDEVNAME_SIZE]; */ /* Modified by Panasonic for reducing error messages. */
 
 	if (uptodate) {
 		set_buffer_uptodate(bh);
 	} else {
 		if (!buffer_eopnotsupp(bh) && printk_ratelimit()) {
 			buffer_io_error(bh);
-			printk(KERN_WARNING "lost page write due to "
-					"I/O error on %s\n",
-				       bdevname(bh->b_bdev, b));
+			/* Modified by Panasonic for reducing error messages. */
+/* 			printk(KERN_WARNING "lost page write due to " */
+/* 					"I/O error on %s\n", */
+/* 				       bdevname(bh->b_bdev, b)); */
 		}
 		set_buffer_write_io_error(bh);
 		clear_buffer_uptodate(bh);
@@ -444,7 +451,7 @@ still_busy:
  */
 static void end_buffer_async_write(struct buffer_head *bh, int uptodate)
 {
-	char b[BDEVNAME_SIZE];
+/* 	char b[BDEVNAME_SIZE]; */ /* Modified by Panasonic for reducing error messages. */
 	unsigned long flags;
 	struct buffer_head *first;
 	struct buffer_head *tmp;
@@ -458,9 +465,10 @@ static void end_buffer_async_write(struct buffer_head *bh, int uptodate)
 	} else {
 		if (printk_ratelimit()) {
 			buffer_io_error(bh);
-			printk(KERN_WARNING "lost page write due to "
-					"I/O error on %s\n",
-			       bdevname(bh->b_bdev, b));
+			/* Modified by Panasonic for reducing error messages. */
+/* 			printk(KERN_WARNING "lost page write due to " */
+/* 					"I/O error on %s\n", */
+/* 			       bdevname(bh->b_bdev, b)); */
 		}
 		set_bit(AS_EIO, &page->mapping->flags);
 		set_buffer_write_io_error(bh);
@@ -1443,6 +1451,56 @@ __bread(struct block_device *bdev, sector_t block, unsigned size)
 	return bh;
 }
 EXPORT_SYMBOL(__bread);
+
+/* Panasonic Original */
+void dirent_breadahead(struct super_block *sb, sector_t block)
+{
+	struct buffer_head *bh = __getblk(sb->s_bdev, block, sb->s_blocksize);
+	if (likely(bh)) {
+		set_bit(BH_Dirent, &bh->b_state);
+		ll_rw_block(READA, 1, &bh);
+		brelse(bh);
+	}
+}
+EXPORT_SYMBOL(dirent_breadahead);
+
+struct buffer_head * dirent_bread(struct super_block *sb, sector_t block)
+{
+	struct buffer_head *bh = __getblk(sb->s_bdev, block, sb->s_blocksize);
+
+	if (likely(bh) && !buffer_uptodate(bh)){
+		set_bit(BH_Dirent, &bh->b_state);
+		bh = __bread_slow(bh);
+	}
+	return bh;
+}
+EXPORT_SYMBOL(dirent_bread);
+/*--------------------*/
+
+/* Panasonic Original */
+void meta_breadahead(struct super_block *sb, sector_t block, enum bh_state_bits meta)
+{
+	struct buffer_head *bh = __getblk(sb->s_bdev, block, sb->s_blocksize);
+	if (likely(bh)) {
+		set_bit(meta, &bh->b_state);
+		ll_rw_block(READA, 1, &bh);
+		brelse(bh);
+	}
+}
+EXPORT_SYMBOL(meta_breadahead);
+
+struct buffer_head * meta_bread(struct super_block *sb, sector_t block, enum bh_state_bits meta)
+{
+	struct buffer_head *bh = __getblk(sb->s_bdev, block, sb->s_blocksize);
+
+	if (likely(bh) && !buffer_uptodate(bh)){
+		set_bit(meta, &bh->b_state);
+		bh = __bread_slow(bh);
+	}
+	return bh;
+}
+EXPORT_SYMBOL(meta_bread);
+/*--------------------*/
 
 /*
  * invalidate_bh_lrus() is called rarely - but not only at unmount.
@@ -2959,6 +3017,20 @@ int submit_bh(int rw, struct buffer_head * bh)
 	bio->bi_private = bh;
 
 	bio_get(bio);
+
+	/* Added by Panasonic for delayproc */
+	if(test_bit(BH_Dirent, &bh->b_state)){
+		set_bit(BIO_RW_DIRENT, &bio->bi_rw);
+	}
+	/* Modified by Panasonic (SAV), 2009-sep-28 */
+	if(test_bit(BH_Fat, &bh->b_state)){
+		set_bit(BIO_RW_FAT, &bio->bi_rw);
+	}
+	if(test_bit(BH_Fsinfo, &bh->b_state)){
+		set_bit(BIO_RW_FSINFO, &bio->bi_rw);
+	}
+	/*------------------------------------------*/
+	
 	submit_bio(rw, bio);
 
 	if (bio_flagged(bio, BIO_EOPNOTSUPP))

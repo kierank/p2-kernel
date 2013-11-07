@@ -1,6 +1,7 @@
 /*
  * Common pmac/prep/chrp pci routines. -- Cort
  */
+/* $Id: pci_32.c 11065 2010-12-10 06:42:32Z Noguchi Isao $ */
 
 #include <linux/kernel.h>
 #include <linux/pci.h>
@@ -23,6 +24,19 @@
 #include <asm/byteorder.h>
 #include <asm/uaccess.h>
 #include <asm/machdep.h>
+
+/* Added by Panasonic, 2009/6/17 >>>>> */
+#ifdef CONFIG_ZION_PCI_WAIT_INIT
+
+#ifdef CONFIG_P2GPIODRV
+#include <linux/p2gpio.h>
+#else  /* !CONFIG_P2GPIODRV */
+#include <linux/p2ioport.h>
+#endif  /* CONFIG_P2GPIODRV */
+
+#endif  /* CONFIG_ZION_PCI_WAIT_INIT */
+/* <<<<< Added by Panasonic, 2009/6/17 */
+
 
 #undef DEBUG
 
@@ -378,6 +392,29 @@ static int __init pcibios_init(void)
 	struct pci_bus *bus;
 	int next_busno = 0;
 
+    /* Added by Panasonic, 2009/3/5, 2009/6/17 >>>>> */
+#ifdef CONFIG_ZION_PCI_WAIT_INIT
+    {
+        int cnt;
+        static const int IVAL=100; 
+        printk(KERN_INFO "**** Wait until ZION is initialized by SYSCON\n");
+        for(cnt=0;;cnt++){
+            int ret=0;
+            int zion_not_init;
+            ret = p2ioport_get_vport(P2IOPORT_VPORT_ZION_INIT_L,&zion_not_init);
+            if(ret!=0)
+                return ret;
+            if(!zion_not_init)
+                break;
+            if(!(cnt%10))
+                printk(KERN_INFO "**** Waiting\n");
+            msleep(IVAL);
+        }
+        printk(KERN_INFO "**** done!!\n");
+    }
+#endif  /* CONFIG_ZION_PCI_WAIT_INIT */
+    /* <<<<< Added by Panasonic, 2009/3/5, 2009/6/17 */
+
 	printk(KERN_INFO "PCI: Probing PCI hardware\n");
 
 	if (ppc_pci_flags & PPC_PCI_REASSIGN_ALL_BUS)
@@ -426,7 +463,13 @@ void __devinit pcibios_do_bus_setup(struct pci_bus *bus)
 	int i;
 
 	/* Hookup PHB resources */
-	io_offset = (unsigned long)hose->io_base_virt - isa_io_base;
+/* 2010/12/9, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_PPC_MPC83XX_PCI_IOMAP
+        io_offset = 0;
+#else  /* ! CONFIG_PPC_MPC83XX_PCI_IOMAP */
+        io_offset = (unsigned long)hose->io_base_virt - isa_io_base;
+#endif  /* CONFIG_PPC_MPC83XX_PCI_IOMAP */
+/* <--- 2010/12/9, modified by Panasonic (SAV) */
 	if (bus->parent == NULL) {
 		/* This is a host bridge - fill in its resources */
 		hose->bus = bus;
@@ -519,7 +562,13 @@ unsigned long pci_address_to_pio(phys_addr_t address)
 		if (address >= hose->io_base_phys &&
 		    address < (hose->io_base_phys + size)) {
 			unsigned long base =
+/* 2010/12/9, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_PPC_MPC83XX_PCI_IOMAP
+                0;
+#else  /* ! CONFIG_PPC_MPC83XX_PCI_IOMAP */
 				(unsigned long)hose->io_base_virt - _IO_BASE;
+#endif  /* CONFIG_PPC_MPC83XX_PCI_IOMAP */
+/* <--- 2010/12/9, modified by Panasonic (SAV) */
 			return base + (address - hose->io_base_phys);
 		}
 	}

@@ -1,0 +1,156 @@
+＜ZIONドライバCOMMON部 API＞
+
+0. COMMON部の役割
+ZIONドライバのCOMMON部は、ZIONのWorkRAM領域へのアクセス、およびMBUSレジスタへのアクセスを提供する。
+また、common部を用いて ZION内部の割り込みを検出することもできる。
+なお、COMMON部のマイナー番号は include/linux/zion.h にてZION_COMMON マクロで定義されている。
+
+1.systemcall の read / write / lseek を使った WorkRAM へのアクセス
+ZIONドライバCOMMON部は、Linuxのsystemcallである read / write / lseek を使った WorkRAM へのアクセスを提供している。
+これらのsystemcallを用いるときの制限は以下となる。
+
+1.1 read
+・WorkRAMのサイズを越えた部分を含む領域を読み込もうとした場合、readはWorkRAMの末尾までおこなわれ、返値は実際に読み込んだサイズとなる。
+・読み込むサイズ(byte)が4byteの倍数であるときはDWアクセス、2byteの倍数でしかないときはWアクセス、奇数バイトの場合はBアクセスで指定された領域全体を読み出す。
+
+1.2 write
+・WorkRAMのサイズを越えた部分を含む領域に書き込もうとした場合、writeはWorkRAMの末尾までおこなわれ、返値は実際に書き込んだサイズとなる。
+・書き込むサイズ(byte)が4byteの倍数であるときはDWアクセス、2byteの倍数でしかないときはWアクセス、奇数バイトの場合はBアクセスで指定された領域全体に書き込む。
+
+1.3 lseek
+・WorkRAM末尾を越えた部分にseekすることはできない。試みた場合は、ファイル位置はそのままで返値は-EINVALとなる。
+
+2.systemcall の mmap を使った WorkRAM へのアクセス
+ZIONドライバCOMMON部は、mmapを使って WorkRAM をユーザメモリ空間にMAPするアクセス法を提供している。
+ここでは、mmapそのものについては詳説しない。Linuxのman等をみること。ドライバとしての制約はない。
+
+3.ioctlを使った WorkRAM へのアクセス
+ZIONドライバCOMMON部は、ioctlを使ったWorkRAMへのアクセスを提供している。
+commandとそのインターフェイスは以下のとおり。
+
+関数名：
+    ZION_WRAM_READ
+    ZION_WRAM_WRITE
+機能：
+    Work RAM　領域へのPIO アクセスによるRead/Write
+引数：
+    struct zion_buf へのポインタ
+    struct zion_buf
+     {
+       unsigned long addr;  /* 各モジュール内でのオフセットアドレス */
+       unsigned long size;   /* 書き込むデータのサイズ */
+       void *buf;           /* データの実体 */
+       char access_type;    /* アクセス幅。'b' 'w' 'd' のいずれか */
+       int dma_ch;          /* WRAMアクセスでは関係ない */
+     };
+備考：
+    addr+sizeがWork RAMの容量を超えている場合は、ioctlがエラーで終了する。
+備考２：
+   指定されたアクセス幅により、指定できる先頭アドレスとデータサイズは制限される。
+   先頭アドレス、データサイズともに、アクセス幅が'w'の場合は2の倍数、
+   'd'の場合は4の倍数であることが要求される。'b'の場合は制限がない。
+
+4.MBUSレジスタへのアクセス
+ZIONドライバCOMMON部は、ioctlを使ってMBUS空間のレジスタにアクセスする手段を提供している。
+commandとそのインターフェイスは以下のとおり。
+
+関数名：
+　　ZION_MBUS_READ_CONFIG_BYTE
+　　ZION_MBUS_WRITE_CONFIG_BYTE
+機能：
+　　M-Bus空間 Reg.のワード単位のRead/Write
+引数：
+　　struct zion_config_byte へのポインタ
+　　struct zion_config_byte
+     {
+       int where;  /* 各モジュール内でのオフセットアドレス */
+       unsigned char val;  /* whereに設定する値 */
+     };
+---
+関数名：
+　　ZION_MBUS_READ_CONFIG_WORD
+　　ZION_MBUS_WRITE_CONFIG_WORD
+機能：
+　　M-Bus空間 Reg.のワード単位のRead/Write
+    （エンディアンの変換はドライバが自動でおこなう）
+引数：
+　　struct zion_config_word へのポインタ
+　　struct zion_config_word
+     {
+       int where;  /* 各モジュール内でのオフセットアドレス */
+       unsigned short val;  /* whereに設定する値 */
+     };
+---
+関数名：
+　　ZION_MBUS_READ_CONFIG_DWORD
+　　ZION_MBUS_WRITE_CONFIG_DWORD
+機能：
+　　M-Bus空間 Reg.のダブルワード単位のRead/Write
+    （エンディアンの変換はドライバが自動でおこなう）
+引数：
+　　struct zion_config_dword へのポインタ
+　　struct zion_config_dword
+     {
+       int where;  /* 各モジュール内でのオフセットアドレス */
+       unsigned int val;  /* whereに設定する値 */
+     };
+
+4. ZION内部の割り込みの検出
+ZIONドライバCOMMON部は、ZION内部で割り込みが発生したことを
+ioctlを用いて検出する仕組みを提供している。
+
+関数名：
+　　ZION_WAIT_INTERRUPT
+機能：
+　　ioctlは、ZION_SET_ENABLE_BITSで設定された割り込みが検出されるか、
+    Timeout(defaultは5秒。ZION_SET_TIMEOUTで設定可)が発生するまで
+    返ってこない。
+引数：
+　　struct ZION_Interrupt_Bits へのポインタ
+
+    struct ZION_Interrupt_Bits
+     {
+       #define ZION_WAKEUP_FORCED  (((u16)1)<<(15))
+       #define ZION_WAKEUP_TIMEOUT (((u16)1)<<(14))
+       __u16 PCI_INT;     /* PCIレジスタ 0x40 に対応 */
+       __u16 NEO_INT;     /* MBUS空間レジスタ 0x001A に対応 */
+       __u32 DUEL_INT;    /* MBUS空間レジスタ 0x1008 に対応 */
+       __u16 DMA_INT[3];  /* MBUS空間レジスタ 0x0206, 0x0286, 0x0306 に対応 */
+       __u16 DVC_INT;     /* MBUS空間レジスタ 0x2012 に対応 */
+       __u16  MAT_INT[4]; /* MBUS空間レジスタ 0x0A0E, 0x0A4E, 0x0A8E, 0x0ACE に対応 */
+     }__attribute__((packed));
+
+備考：
+    検出された割り込みの種類は、引数として与えた
+    struct ZION_Interrupt_Bits に格納されて返される。
+    ・PCI_INTの上位2ビットは特別な意味を有する。
+      最上位ビットは強制wakeup(ZION_WAKE_THREADS_UP)されたことを示し、
+      その次のビットはTimeoutで起きたことを示している。
+    ・ZION_SET_ENABLE_BITSで設定された割り込み以外でioctlが起こされることはないが、
+      返り値の struct ZION_Interrupt_Bits の中には、設定した要因以外の
+      (sleepしている間に発生した)割り込み履歴も保存されている。
+    ・同時に複数のZION_SET_ENABLE_BITS命令が呼ばれてもよい。
+---
+
+関数名：
+    ZION_WAKE_THREADS_UP
+機能：
+    割り込みを待っているZION_WAIT_INTERRUPT命令を全て強制的に起こす
+引数：
+    なし(NULL)
+---
+
+関数名：
+    ZION_SET_ENABLE_BITS
+機能：
+    ZION_SET_ENABLE_BITS命令が起こされる割り込み要因を設定する
+引数：
+　　struct ZION_Interrupt_Bits へのポインタ
+---
+
+関数名：
+    ZION_SET_TIMEOUT
+機能：
+    ZION_SET_ENABLE_BITS命令がTimeoutで返って来る時間を設定する
+引数：
+　　unsinged long 型の数値 (単位はjiffies=10ms)

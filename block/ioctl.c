@@ -106,6 +106,13 @@ static int blkdev_reread_part(struct block_device *bdev)
 		return -EACCES;
 	if (!mutex_trylock(&bdev->bd_mutex))
 		return -EBUSY;
+/* P2PF TARGET DEPENDENT CODE (K277) -->	*/
+/* Modified by Panasonic : 2009/06/09		*/
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+	if( (bdev->removal_detection) && (disk->major == SCSI_DISK0_MAJOR) )
+		return -ENODEV;
+#endif	
+/* <-- P2PF TARGET DEPENDENT CODE (K277)	*/
 	res = rescan_partitions(disk, bdev);
 	mutex_unlock(&bdev->bd_mutex);
 	return res;

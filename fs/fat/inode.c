@@ -1375,6 +1375,13 @@ int fat_fill_super(struct super_block *sb, void *data, int silent,
 	/* check the free_clusters, it's not necessarily correct */
 	if (sbi->free_clusters != -1 && sbi->free_clusters > total_clusters)
 		sbi->free_clusters = -1;
+
+	/* Panasonic Original */
+	if(sbi->prev_free > MAX_FAT(sb)){
+		sbi->prev_free = FAT_START_ENT;
+	}
+	/*--------------------*/
+
 	/* check the prev_free, it's not necessarily correct */
 	sbi->prev_free %= sbi->max_cluster;
 	if (sbi->prev_free < FAT_START_ENT)

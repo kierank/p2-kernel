@@ -30,6 +30,8 @@
 #define MPC8315_SICRL_USB_ULPI     0x00000054
 #define MPC837X_SICRL_USB_MASK     0xf0000000
 #define MPC837X_SICRL_USB_ULPI     0x50000000
+#define MPC837X_SICRL_USBB_MASK    0x30000000
+#define MPC837X_SICRL_SD           0x20000000
 
 /* system i/o configuration register high */
 #define MPC83XX_SICRH_OFFS         0x118
@@ -63,5 +65,13 @@ extern void mpc83xx_restart(char *cmd);
 extern long mpc83xx_time_init(void);
 extern int mpc834x_usb_cfg(void);
 extern int mpc831x_usb_cfg(void);
+
+struct irq_tbl {
+	unsigned char vector;
+	unsigned char alloted;
+};
+
+#define MSI_ADDR_BASE_HI	0
+#define MSI_ADDR_BASE_LO	0xE00007F8
 
 #endif				/* __MPC83XX_H__ */

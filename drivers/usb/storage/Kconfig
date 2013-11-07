@@ -1,6 +1,7 @@
 #
 # USB Storage driver configuration
 #
+## $Id: Kconfig 10895 2010-12-05 23:18:33Z Noguchi Isao $
 
 comment "NOTE: USB_STORAGE enables SCSI, and 'SCSI disk support'"
 comment "may also be needed; see USB_STORAGE Help for more information"
@@ -30,6 +31,68 @@ config USB_STORAGE_DEBUG
 	help
 	  Say Y here in order to have the USB Mass Storage code generate
 	  verbose debugging messages.
+
+## 2010/10/14, added by Panasonic (SAV) --->
+
+menuconfig USB_STORAGE_EXTENSION
+	bool "*** USB Mass Storage optional extension"
+	depends on USB_STORAGE
+    default n
+    help
+	  Say Y here in order to enable optional USB Mass Storage
+	  extension setting
+
+if USB_STORAGE_EXTENSION
+
+config USB_STORAGE_RESTRICT_ROUTING
+    bool "Enabled restriction of routing to storage device"
+    default n
+    select USB_RESTRICT_ROUTING
+    help
+	  Say Y here in order to enable restriction routing to storage
+	  device
+
+choice
+    prompt "Which the case to ignore the storage device ?"
+    depends on USB_STORAGE_RESTRICT_ROUTING
+    default USB_STORAGE_RESTRICT_WHEN_NOT_MEET
+
+config USB_STORAGE_RESTRICT_WHEN_MEET
+    bool "routing condition is met"
+
+config USB_STORAGE_RESTRICT_WHEN_NOT_MEET
+    bool "routing condition is NOT met"
+
+endchoice
+
+config USB_STORAGE_RESTRICT_BUSNUM
+    int "bus number"
+    depends on USB_STORAGE_RESTRICT_ROUTING
+    default 0
+
+config USB_STORAGE_RESTRICT_ROOTPORT
+    int "port number of root hub"
+    depends on USB_STORAGE_RESTRICT_ROUTING
+    depends on USB_STORAGE_RESTRICT_BUSNUM!=0
+    default 0
+
+config USB_STORAGE_RESTRICT_SS_ROOTPORT
+    int "SuperSpeed port number of root hub"
+    depends on USB_STORAGE_RESTRICT_ROUTING
+    depends on USB_STORAGE_RESTRICT_BUSNUM!=0
+    default 0
+
+config USB_STORAGE_RESTRICT_ROUTE_STRING
+    hex "route string value"
+    depends on USB_STORAGE_RESTRICT_ROUTING
+    depends on USB_STORAGE_RESTRICT_BUSNUM!=0
+    depends on USB_STORAGE_RESTRICT_ROOTPORT!=0 || USB_STORAGE_RESTRICT_SS_ROOTPORT!=0
+    default 0x00000000
+    
+
+endif # USB_STORAGE_EXTENSION
+## <--- 2010/10/14, added by Panasonic (SAV)
+
 
 config USB_STORAGE_DATAFAB
 	bool "Datafab Compact Flash Reader support"
@@ -103,6 +166,30 @@ config USB_STORAGE_SDDR55
 	help
 	  Say Y here to include additional code to support the Sandisk SDDR-55
 	  SmartMedia reader in the USB Mass Storage driver.
+
+# Panasonic Original #
+config USB_STORAGE_SM331
+	bool "Silicon Motion SM331 support"
+	depends on USB_STORAGE
+	help
+	  Say Y here to include additional code to support the Sandisk
+	  SmartMedia reader in the USB Mass Storage driver.
+
+config SM331_USE_HUB
+	bool "Use usb hub."
+	depends on USB_STORAGE_SM331
+	default n
+
+config SM331_AV_SLOT_NUM
+	depends on USB_STORAGE_SM331
+	hex "The number of sm331 slot for AV rec." if USB_STORAGE_SM331
+	default 0x1
+
+config SM331_AV_SLOT_OFFSET
+	depends on USB_STORAGE_SM331
+	hex "The offset port of sm331 in usb-hub" if USB_STORAGE_SM331
+	default 0x1
+######################
 
 config USB_STORAGE_JUMPSHOT
 	bool "Lexar Jumpshot Compact Flash Reader"

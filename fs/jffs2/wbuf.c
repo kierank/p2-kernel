@@ -678,11 +678,15 @@ static int __jffs2_flush_wbuf(struct jffs2_sb_info *c, int pad)
 	spin_unlock(&c->erase_completion_lock);
 
 	memset(c->wbuf,0xff,c->wbuf_pagesize);
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+	c->wbuf_ofs += c->wbuf_pagesize;
+#else /* ! CONFIG_MTD_CFI_AMDSTD_S29GLS */
 	/* adjust write buffer offset, else we get a non contiguous write bug */
 	if (SECTOR_ADDR(c->wbuf_ofs) == SECTOR_ADDR(c->wbuf_ofs+c->wbuf_pagesize))
 		c->wbuf_ofs += c->wbuf_pagesize;
 	else
 		c->wbuf_ofs = 0xffffffff;
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
 	c->wbuf_len = 0;
 	return 0;
 }

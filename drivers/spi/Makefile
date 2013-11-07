@@ -1,6 +1,7 @@
 #
 # Makefile for kernel SPI drivers.
 #
+## $Id: Makefile 11136 2010-12-14 05:30:50Z Noguchi Isao $
 
 ifeq ($(CONFIG_SPI_DEBUG),y)
 EXTRA_CFLAGS += -DDEBUG
@@ -29,6 +30,10 @@ obj-$(CONFIG_SPI_S3C24XX)		+= spi_s3c24xx.o
 obj-$(CONFIG_SPI_TXX9)			+= spi_txx9.o
 obj-$(CONFIG_SPI_XILINX)		+= xilinx_spi.o
 obj-$(CONFIG_SPI_SH_SCI)		+= spi_sh_sci.o
+## 2010/12/13, added by Panasonic (SAV) -->
+obj-$(CONFIG_SPI_GPIO)			+= spi_gpio.o of_gpio_spi.o
+## <-- 2010/12/13, added by Panasonic (SAV)
+
 # 	... add above this line ...
 
 # SPI protocol drivers (device/link on bus)

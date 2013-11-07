@@ -9,6 +9,7 @@
  *
  * Please see Documentation/filesystems/sysfs.txt for more information.
  */
+/* $Id: file.c 12081 2011-01-31 06:38:59Z Noguchi Isao $ */
 
 #include <linux/module.h>
 #include <linux/kobject.h>
@@ -437,6 +438,7 @@ static unsigned int sysfs_poll(struct file *filp, poll_table *wait)
 
  trigger:
 	buffer->needs_read_fill = 1;
+
 	return POLLERR|POLLPRI;
 }
 

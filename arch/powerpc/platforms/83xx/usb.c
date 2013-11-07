@@ -9,7 +9,7 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
-
+/* $Id: usb.c 14403 2011-05-18 02:58:59Z Noguchi Isao $ */
 
 #include <linux/stddef.h>
 #include <linux/kernel.h>
@@ -106,16 +106,24 @@ int mpc831x_usb_cfg(void)
 	struct device_node *np = NULL;
 	struct device_node *immr_node = NULL;
 	const void *prop;
+	const void *prop2;
 	struct resource res;
 	int ret = 0;
-#ifdef CONFIG_USB_OTG
-	const void *dr_mode;
-#endif
+/* 2011.2.28, modified by panasonic (SAV) ---> */
+/* #ifdef CONFIG_USB_OTG */
+/* 	const void *dr_mode; */
+/* #endif */
+	const void *dr_mode = NULL;
+/* <--- 2011.2.28, modified by panasonic (SAV) */
 
 	np = of_find_compatible_node(NULL, NULL, "fsl-usb2-dr");
 	if (!np)
 		return -ENODEV;
 	prop = of_get_property(np, "phy_type", NULL);
+	prop2 = of_get_property(np, "phy_clk", NULL); /* UTMI REF CLOCK setting */
+
+/* 2011.2.28, added by panasonic (SAV) */
+    dr_mode = of_get_property(np, "dr_mode", NULL);
 
 	/* Map IMMR space for pin and clock settings */
 	immap = ioremap(get_immrbase(), 0x1000);
@@ -129,11 +137,11 @@ int mpc831x_usb_cfg(void)
 	if (immr_node && of_device_is_compatible(immr_node, "fsl,mpc8315-immr"))
 		clrsetbits_be32(immap + MPC83XX_SCCR_OFFS,
 		                MPC8315_SCCR_USB_MASK,
-		                MPC8315_SCCR_USB_DRCM_01);
+		                (!dr_mode||strcmp(dr_mode,"none"))? MPC8315_SCCR_USB_DRCM_01: 0); /* 2011.2.28, modified by panasonic (SAV) */
 	else
 		clrsetbits_be32(immap + MPC83XX_SCCR_OFFS,
 		                MPC83XX_SCCR_USB_MASK,
-		                MPC83XX_SCCR_USB_DRCM_11);
+		                (!dr_mode||strcmp(dr_mode,"none"))? MPC83XX_SCCR_USB_DRCM_11: 0); /* 2011.2.28, modified by panasonic (SAV) */
 
 	/* Configure pin mux for ULPI.  There is no pin mux for UTMI */
 	if (prop && !strcmp(prop, "ulpi")) {
@@ -168,14 +176,52 @@ int mpc831x_usb_cfg(void)
 	usb_regs = ioremap(res.start, res.end - res.start + 1);
 
 	/* Using on-chip PHY */
-	if (prop && (!strcmp(prop, "utmi_wide") ||
-		     !strcmp(prop, "utmi"))) {
+/* 2011.2.28, modified by panasonic (SAV) ---> */
+    if (dr_mode && !strcmp(dr_mode,"none")) {
+        pr_info("[%s] **** Property dr_mode is \"%s\". So USB PHY is disabled.\n",
+                np->name, (const char*)dr_mode);
+		out_be32(usb_regs + FSL_USB2_CONTROL_OFFS, 0);
+    } else if (prop && (!strcmp(prop, "utmi_wide") || !strcmp(prop, "utmi"))) {
+/* 	if (prop && (!strcmp(prop, "utmi_wide") || */
+/* 		     !strcmp(prop, "utmi"))) { */
+/* <--- 2011.2.28, modified by panasonic (SAV) */
 		u32 refsel;
 
-		if (of_device_is_compatible(immr_node, "fsl,mpc8315-immr"))
+#if 1  /* 2010/02/22, Modified by Panasonic */
+        if (prop2 && !strcmp(prop2, "24mhz")) {
+            /* UTMI REF CLOCK is 24MHz */
+            refsel = CONTROL_REFSEL_24MHZ;
+		}
+		else if (prop2 && !strcmp(prop2, "48mhz")) {
+            /* UTMI REF CLOCK is 48MHz */
+            refsel = CONTROL_REFSEL_48MHZ;
+		}
+		else if (of_device_is_compatible(immr_node, "fsl,mpc8315-immr")) {
+            /* UTMI REF CLOCK for MPC8315 */
 			refsel = CONTROL_REFSEL_24MHZ;
-		else
+		}
+        else {
+            /* UTMI REF CLOCK default setting */
 			refsel = CONTROL_REFSEL_48MHZ;
+		}
+#else   /* original */
+		if (of_device_is_compatible(immr_node, "fsl,mpc8315-immr")) {
+		        /* UTMI REF CLOCK for MPC8315 */
+			refsel = CONTROL_REFSEL_24MHZ;
+		}
+		else if (prop2 && !strcmp(prop2, "24mhz")) {
+		        /* UTMI REF CLOCK is 24MHz */
+		        refsel = CONTROL_REFSEL_24MHZ;
+		}
+		else if (prop2 && !strcmp(prop2, "48mhz")) {
+		        /* UTMI REF CLOCK is 48MHz */
+		        refsel = CONTROL_REFSEL_48MHZ;
+		}
+		else {
+		        /* UTMI REF CLOCK default setting */
+			refsel = CONTROL_REFSEL_48MHZ;
+		}
+#endif  /* 2010/02/22, Modified by Panasonic */
 		/* Set UTMI_PHY_EN and REFSEL */
 		out_be32(usb_regs + FSL_USB2_CONTROL_OFFS,
 				CONTROL_UTMI_PHY_EN | refsel);
@@ -185,7 +231,8 @@ int mpc831x_usb_cfg(void)
 		temp = CONTROL_PHY_CLK_SEL_ULPI;
 #ifdef CONFIG_USB_OTG
 		/* Set OTG_PORT */
-		dr_mode = of_get_property(np, "dr_mode", NULL);
+/* 2011.2.28, commented by panasonic (SAV) */
+/* 		dr_mode = of_get_property(np, "dr_mode", NULL); */
 		if (dr_mode && !strcmp(dr_mode, "otg"))
 			temp |= CONTROL_OTG_PORT;
 #endif /* CONFIG_USB_OTG */
@@ -207,6 +254,7 @@ int mpc837x_usb_cfg(void)
 	void __iomem *immap;
 	struct device_node *np = NULL;
 	const void *prop;
+	const void *dr_mode = NULL; /* 2011.2.28, added by panasonic ---> */
 	int ret = 0;
 
 	np = of_find_compatible_node(NULL, NULL, "fsl-usb2-dr");
@@ -220,6 +268,8 @@ int mpc837x_usb_cfg(void)
 		return -EINVAL;
 	}
 
+    dr_mode = of_get_property(np, "dr_mode", NULL); /* 2011.2.28, added by panasonic */
+
 	/* Map IMMR space for pin and clock settings */
 	immap = ioremap(get_immrbase(), 0x1000);
 	if (!immap) {
@@ -229,7 +279,7 @@ int mpc837x_usb_cfg(void)
 
 	/* Configure clock */
 	clrsetbits_be32(immap + MPC83XX_SCCR_OFFS, MPC837X_SCCR_USB_DRCM_11,
-			MPC837X_SCCR_USB_DRCM_11);
+                    (!dr_mode||strcmp(dr_mode,"none"))? MPC837X_SCCR_USB_DRCM_11: 0);/* 2011.2.28, modified by panasonic (SAV) */
 
 	/* Configure pin mux for ULPI/serial */
 	clrsetbits_be32(immap + MPC83XX_SICRL_OFFS, MPC837X_SICRL_USB_MASK,

@@ -273,6 +273,21 @@ int wait_on_page_writeback_range(struct address_space *mapping,
 	if (end < start)
 		return 0;
 
+	if(mapping->host!=NULL
+	   && mapping->host->i_sb!=NULL
+	   && mapping->host->i_sb->s_bdev!=NULL)
+	{
+
+		struct request_queue *q = bdev_get_queue(mapping->host->i_sb->s_bdev);
+
+		if(q->elevator!=NULL
+		   && q->elevator->ops!=NULL
+		   && q->elevator->ops->elevator_force_dispatch_fn!=NULL)
+		{
+			q->elevator->ops->elevator_force_dispatch_fn(q, 0);
+	    	}
+	}
+
 	pagevec_init(&pvec, 0);
 	index = start;
 	while ((index <= end) &&
@@ -379,10 +394,23 @@ EXPORT_SYMBOL(sync_page_range_nolock);
 int filemap_fdatawait(struct address_space *mapping)
 {
 	loff_t i_size = i_size_read(mapping->host);
+#if defined(CONFIG_RTCTRL) /* Added by Panasonic for RT control */
+	struct inode *inode = mapping->host;
+	dev_t dev = choose_rtctrl_dev(inode->i_sb->s_dev, inode->i_rdev);
+#endif /* CONFIG_RTCTRL */
 
 	if (i_size == 0)
 		return 0;
 
+#if defined(CONFIG_RTCTRL) /* Added by Panasonic for RT control ----> */
+	lock_rton( MAJOR(dev) );
+	if ( inode && !inode_is_rt(inode) && is_rton4wait(dev) ) {
+		unlock_rton( MAJOR(dev) );
+		return 0;
+	}
+	unlock_rton( MAJOR(dev) );
+#endif /* CONFIG_RTCTRL */ /* <---- Added by Panasonic for RT control */
+	
 	return wait_on_page_writeback_range(mapping, 0,
 				(i_size - 1) >> PAGE_CACHE_SHIFT);
 }
@@ -2190,6 +2218,7 @@ EXPORT_SYMBOL(generic_file_direct_write);
  * Find or create a page at the given pagecache position. Return the locked
  * page. This function is specifically for buffered writes.
  */
+
 struct page *__grab_cache_page(struct address_space *mapping, pgoff_t index)
 {
 	int status;

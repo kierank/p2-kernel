@@ -14,6 +14,7 @@
  * published by the Free Software Foundation.
  *
  */
+/* $Id: m25p80.c 14405 2011-05-18 04:37:23Z Noguchi Isao $ */
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -41,6 +42,8 @@
 #define	OPCODE_BE_32K		0x52	/* Erase 32KiB block */
 #define	OPCODE_SE		0xd8	/* Sector erase (usually 64KiB) */
 #define	OPCODE_RDID		0x9f	/* Read JEDEC ID */
+/* 2011/5/9, added by Panasonic (PAV) */
+#define	OPCODE_RES		0xab	/* Read Electronic Signature */
 
 /* Status Register bits. */
 #define	SR_WIP			1	/* Write in progress */
@@ -432,11 +435,18 @@ static int m25p80_write(struct mtd_info *mtd, loff_t to, size_t len,
 struct flash_info {
 	char		*name;
 
-	/* JEDEC id zero means "no ID" (most older chips); otherwise it has
-	 * a high byte of zero plus three data bytes: the manufacturer id,
-	 * then a two byte device id.
-	 */
-	u32		jedec_id;
+/* 2011/5/9, modified by Panasonic (PAV) ---> */
+
+/* 	/\* JEDEC id zero means "no ID" (most older chips); otherwise it has */
+/* 	 * a high byte of zero plus three data bytes: the manufacturer id, */
+/* 	 * then a two byte device id. */
+/* 	 *\/ */
+/* 	u32		jedec_id; */
+
+    /* dev_id is JEDEC ID or Signature ID */
+    u32 dev_id;
+
+/* <--- 2011/5/9, modified by Panasonic (PAV) */
 
 	/* The size listed here is what works with OPCODE_SE, which isn't
 	 * necessarily called a "sector" by the vendor.
@@ -446,6 +456,11 @@ struct flash_info {
 
 	u16		flags;
 #define	SECT_4K		0x01		/* OPCODE_BE_4K works uniformly */
+/* 2011/5/9, added by Panasonic (PAV) */
+#define USE_SIGID   0x08        /* Use Electric Signature instead of JEDEC ID */
+
+/* 2011/2/22, added by Panasonic (SAV) */
+    u32 id_mask;                /* if not-zero then jedec_id is masked by this value */
 };
 
 
@@ -454,6 +469,14 @@ struct flash_info {
  * have been converging on command sets which including JEDEC ID.
  */
 static struct flash_info __devinitdata m25p_data [] = {
+
+/* 2011/2/22, added by Panasonic (SAV) ---> */
+	/* Altera -- EPCSxx (same as m25pxx), "jedec_id" is 8bit */
+	{ "epcs1",   0x10,  32 * 1024, 4,   USE_SIGID, 0xff},
+	{ "epcs4",   0x12,  64 * 1024, 8,   USE_SIGID, 0xff},
+	{ "epcs16",  0x14,  64 * 1024, 32,  USE_SIGID, 0xff},
+	{ "epcs64",  0x16,  64 * 1024, 128, USE_SIGID, 0xff},
+/* <--- 2011/2/22, added by Panasonic (SAV) */
 
 	/* Atmel -- some are (confusingly) marketed as "DataFlash" */
 	{ "at25fs010",  0x1f6601, 32 * 1024, 4, SECT_4K, },
@@ -499,7 +522,7 @@ static struct flash_info __devinitdata m25p_data [] = {
 	{ "m25pe80", 0x208014,  64 * 1024, 16, },
 	{ "m25pe16", 0x208015,  64 * 1024, 32, SECT_4K, },
 
-	/* Winbond -- w25x "blocks" are 64K, "sectors" are 4KiB */
+	/* Winbond -- w25x "blocks" are 64K, "sectors" are 4KB */
 	{ "w25x10", 0xef3011, 64 * 1024, 2, SECT_4K, },
 	{ "w25x20", 0xef3012, 64 * 1024, 4, SECT_4K, },
 	{ "w25x40", 0xef3013, 64 * 1024, 8, SECT_4K, },
@@ -507,42 +530,100 @@ static struct flash_info __devinitdata m25p_data [] = {
 	{ "w25x16", 0xef3015, 64 * 1024, 32, SECT_4K, },
 	{ "w25x32", 0xef3016, 64 * 1024, 64, SECT_4K, },
 	{ "w25x64", 0xef3017, 64 * 1024, 128, SECT_4K, },
+
 };
 
-static struct flash_info *__devinit jedec_probe(struct spi_device *spi)
+/* 2011/5/9, modified by Panasonic (PAV) ---> */
+
+static int __devinit jedec_id(struct spi_device *spi, u32 *id)
 {
-	int			tmp;
-	u8			code = OPCODE_RDID;
-	u8			id[3];
-	u32			jedec;
-	struct flash_info	*info;
+    int retval=0;
+    u8	code = OPCODE_RDID;
+	u8	buff[3];
+    u32 jedec;
 
 	/* JEDEC also defines an optional "extended device information"
 	 * string for after vendor-specific data, after the three bytes
 	 * we use here.  Supporting some chips might require using it.
 	 */
-	tmp = spi_write_then_read(spi, &code, 1, id, 3);
-	if (tmp < 0) {
+	retval = spi_write_then_read(spi, &code, 1, buff, sizeof(buff));
+	if (retval < 0) {
 		DEBUG(MTD_DEBUG_LEVEL0, "%s: error %d reading JEDEC ID\n",
-			spi->dev.bus_id, tmp);
-		return NULL;
+			spi->dev.bus_id, retval);
+		goto fail;
 	}
-	jedec = id[0];
+	jedec = buff[0];
 	jedec = jedec << 8;
-	jedec |= id[1];
+	jedec |= buff[1];
 	jedec = jedec << 8;
-	jedec |= id[2];
+	jedec |= buff[2];
+    *id = jedec;
 
-	for (tmp = 0, info = m25p_data;
-			tmp < ARRAY_SIZE(m25p_data);
-			tmp++, info++) {
-		if (info->jedec_id == jedec)
-			return info;
+ fail:
+    return retval;
+}
+
+
+static int __devinit sig_id(struct spi_device *spi, u32 *id)
+{
+    int retval=0;
+    u8	code = OPCODE_RES;
+	u8	buff[4];
+    u32 sig;
+
+	retval = spi_write_then_read(spi, &code, 1, buff, sizeof(buff));
+	if (retval < 0) {
+		DEBUG(MTD_DEBUG_LEVEL0, "%s: error %d reading Electric Signature\n",
+			spi->dev.bus_id, retval);
+		goto fail;
 	}
-	dev_err(&spi->dev, "unrecognized JEDEC id %06x\n", jedec);
+	sig = buff[0];
+	sig = sig << 8;
+	sig |= buff[1];
+	sig = sig << 8;
+	sig |= buff[2];
+	sig = sig << 8;
+	sig |= buff[3];
+    *id = sig;
+
+ fail:
+    return retval;
+}
+
+
+static struct flash_info *__devinit devid_probe(struct spi_device *spi)
+{
+	int			tmp;
+    u32			jedec, sig;
+	struct flash_info	*info;
+
+    /* jedec id */
+    tmp = jedec_id(spi, &jedec);
+    if(tmp<0)
+		return NULL;
+
+    /* electric signature */
+    tmp = sig_id(spi, &sig);
+    if(tmp<0)
+		return NULL;
+
+	for (tmp = 0, info=m25p_data;
+         tmp < ARRAY_SIZE(m25p_data); tmp++, info++) {
+
+        u32 id = (info->flags & USE_SIGID)? sig: jedec;
+
+        if(info->id_mask)
+            id &= info->id_mask;
+
+		if (info->dev_id == id)
+			return info;
+
+	}
+	dev_err(&spi->dev, "unrecognized JEDEC id %08x and Electric Signature %08x\n", jedec, sig);
 	return NULL;
 }
 
+/* <--- 2011/5/9, modified by Panasonic (PAV) */
 
 /*
  * board specific setup should have ensured the SPI clock used here
@@ -576,19 +657,34 @@ static int __devinit m25p_probe(struct spi_device *spi)
 					spi->dev.bus_id, data->type);
 			info = NULL;
 
-		/* recognized; is that chip really what's there? */
-		} else if (info->jedec_id) {
-			struct flash_info	*chip = jedec_probe(spi);
+/* 2011/5/9, modified by Panasonic (PAV) ---> */
 
-			if (!chip || chip != info) {
-				dev_warn(&spi->dev, "found %s, expected %s\n",
-						chip ? chip->name : "UNKNOWN",
-						info->name);
-				info = NULL;
-			}
+		/* recognized; is that chip really what's there? */
+		} else if (info->dev_id) {
+            u32 id;
+            int retval;
+
+            if(info->flags & USE_SIGID)
+                retval = sig_id(spi,&id);
+            else
+                retval = jedec_id(spi,&id);
+            if(retval<0){
+                dev_warn(&spi->dev, "NOT found %s", info->name);
+                info = NULL;
+            } else {
+                if(info->id_mask)
+                    id &= info->id_mask;
+                if (info->dev_id != id) {
+                    dev_warn(&spi->dev, "NOT found %s: expected 0x%08x, but get 0x%08x\n",
+                             info->name, info->dev_id, id);
+                    info = NULL;
+                }
+            }
 		}
 	} else
-		info = jedec_probe(spi);
+		info = devid_probe(spi);
+
+/* <--- 2011/5/9, modified by Panasonic (PAV) */
 
 	if (!info)
 		return -ENODEV;
@@ -606,7 +702,10 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	 * with the software protection bits set
 	 */
 
-	if (info->jedec_id >> 16 == 0x1f) {
+/* 2011/5/9, modified by Panasonic (PAV) ---> */
+/* 	if (info->jedec_id >> 16 == 0x1f) { */
+	if (info->dev_id >> 16 == 0x1f) {
+/* <--- 2011/5/9, modified by Panasonic (PAV) */
 		write_enable(flash);
 		write_sr(flash, 0);
 	}
@@ -691,6 +790,14 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	} else if (data->nr_parts)
 		dev_warn(&spi->dev, "ignoring %d default partitions on %s\n",
 				data->nr_parts, data->name);
+
+/* 2010/12/13, added by Panasonic (SAV) ---> */
+    if(data->private){
+        void *p=data->private;
+        spi->dev.platform_data=NULL;
+        kfree(p);
+    }
+/* <--- 2010/12/13, added by Panasonic (SAV) */
 
 	return add_mtd_device(&flash->mtd) == 1 ? -ENODEV : 0;
 }

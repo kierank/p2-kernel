@@ -96,6 +96,16 @@ struct mtd_oob_ops {
 	uint8_t		*oobbuf;
 };
 
+/* Add by Panasonic 2008/02/06 ----> */
+#if defined(CONFIG_MTD_SINGLEOPEN)
+struct mtdchar_params_t {
+	int count;
+	spinlock_t spn_lock;
+	pid_t pid;
+};
+#endif /* CONFIG_MTD_SINGLEOPEN */
+/* <---- Add by Panasonic 2008/02/06 */
+
 struct mtd_info {
 	u_char type;
 	u_int32_t flags;

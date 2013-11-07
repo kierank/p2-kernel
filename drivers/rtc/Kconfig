@@ -1,6 +1,7 @@
 #
 # RTC class/drivers configuration
 #
+## $Id: Kconfig 5088 2010-02-09 02:49:16Z Sawada Koji $
 
 config RTC_LIB
 	tristate
@@ -97,6 +98,24 @@ config RTC_INTF_DEV
 	  This driver can also be built as a module. If so, the module
 	  will be called rtc-dev.
 
+## 2010/1/21, Added by Panasonic >>>>
+config RTC_FIXED_DEVNUM
+    boolean "Enabled to fixed major number"
+    depends on RTC_INTF_DEV
+    default n
+
+if RTC_FIXED_DEVNUM
+
+config RTC_FIXED_MAJOR
+    int "Major number"
+    default 0
+
+config RTC_FIXED_MINOR
+    int "Minor number"
+    default 0
+
+endif # RTC_FIXED_DEVNUM
+## <<<< 2010/1/21, Added by Panasonic
 config RTC_INTF_DEV_UIE_EMUL
 	bool "RTC UIE emulation on dev interface"
 	depends on RTC_INTF_DEV
@@ -318,6 +337,18 @@ config RTC_DRV_RS5C348
 
 	  This driver can also be built as a module. If so, the module
 	  will be called rtc-rs5c348.
+
+## 2010/1/14, Added by Panasonic >>>>
+config RTC_DRV_R2113S
+	tristate "Ricoh R2113Sxx"
+	help
+	  If you say yes here you get support for the
+	  Ricoh R2113Sxx RTC chips.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called rtc-r2113s.
+## <<<< 2010/1/14, Added by Panasonic
+
 
 endif # SPI_MASTER
 

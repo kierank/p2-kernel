@@ -1,0 +1,17 @@
+/* $Id: zion_romif_regs.h,v 1.1.1.1 2006/02/27 09:20:56 nishikawa Exp $ */
+
+#ifndef __ZION_ROMIF_REGS_H__
+#define __ZION_ROMIF_REGS_H__
+
+
+#define ZION_MBUS_ROMIF_CTRL (0x0E00)
+#define ZION_MBUS_ROMIF_CMD  (0x0E02)
+#define ZION_MBUS_ROMIF_WDAT (0x0E04)
+#define ZION_MBUS_ROMIF_RDAT (0x0E06)
+#define ZION_MBUS_ROMIF_DSTADR (0x0E08)
+#define ZION_MBUS_ROMIF_INCVAL (0x0E0A)
+#define ZION_MBUS_ROMIF_LENGTH (0x0E0C)
+#define ZION_MBUS_ROMIF_SPI_ADR (0x0E0E)
+
+
+#endif /* __ZION_ROMIF_REGS_H__ */

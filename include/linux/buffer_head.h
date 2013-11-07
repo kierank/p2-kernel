@@ -39,6 +39,12 @@ enum bh_state_bits {
 	BH_PrivateStart,/* not a state bit, but the first bit available
 			 * for private allocation by other entities
 			 */
+
+/* Panasonic Original */
+	BH_Dirent,
+	BH_Fat,
+	BH_Fsinfo,
+/*--------------------*/
 };
 
 #define MAX_BUF_PER_PAGE (PAGE_CACHE_SIZE / 512)
@@ -182,6 +188,12 @@ void __bforget(struct buffer_head *);
 void __breadahead(struct block_device *, sector_t block, unsigned int size);
 struct buffer_head *__bread(struct block_device *, sector_t block, unsigned size);
 void invalidate_bh_lrus(void);
+/* Panasonic Original */
+struct buffer_head *dirent_bread(struct super_block *sb, sector_t block);
+void dirent_breadahead(struct super_block *sb, sector_t block);
+struct buffer_head *meta_bread(struct super_block *sb, sector_t block, enum bh_state_bits meta);
+void meta_breadahead(struct super_block *sb, sector_t block, enum bh_state_bits meta);
+/*--------------------*/
 struct buffer_head *alloc_buffer_head(gfp_t gfp_flags);
 void free_buffer_head(struct buffer_head * bh);
 void unlock_buffer(struct buffer_head *bh);

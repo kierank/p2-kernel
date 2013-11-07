@@ -853,3 +853,7 @@ config PPC_LIB_RHEAP
 	bool
 
 source "arch/powerpc/kvm/Kconfig"
+
+## Panasonic Original ##
+source "drivers/p2pf/Kconfig"
+##--------------------##

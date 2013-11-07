@@ -501,7 +501,15 @@ void __init rtc_dev_init(void)
 {
 	int err;
 
+/* 2010/1/21, modified by panasonic >>>> */
+/* 	err = alloc_chrdev_region(&rtc_devt, 0, RTC_DEV_MAX, "rtc"); */
+#if defined(CONFIG_RTC_FIXED_DEVNUM) && (CONFIG_RTC_FIXED_MAJOR > 0)
+    rtc_devt = MKDEV(CONFIG_RTC_FIXED_MAJOR, CONFIG_RTC_FIXED_MINOR);
+    err = register_chrdev_region(rtc_devt, RTC_DEV_MAX, "rtc");
+#else  /* !defined(CONFIG_RTC_FIXED_DEVNUM) || (CONFIG_RTC_RTC_FIXED_MAJOR==0) */
 	err = alloc_chrdev_region(&rtc_devt, 0, RTC_DEV_MAX, "rtc");
+#endif  /* defined(CONFIG_RTC_FIXED_DEVNUM) && (CONFIG_RTC_RTC_FIXED_MAJOR>0) */
+/* <<<< 2010/1/21, modified by panasonic */
 	if (err < 0)
 		printk(KERN_ERR "%s: failed to allocate char dev region\n",
 			__FILE__);

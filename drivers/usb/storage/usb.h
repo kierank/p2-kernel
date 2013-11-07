@@ -169,6 +169,12 @@ static inline struct us_data *host_to_us(struct Scsi_Host *host) {
 extern void fill_inquiry_response(struct us_data *us,
 	unsigned char *data, unsigned int data_len);
 
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+#ifdef CONFIG_USB_STORAGE_SM331
+extern int is_av_slot(struct usb_device *udev);
+#endif //CONFIG_USB_STORAGE_SM331
+/*------------------------------------------*/
+
 /* The scsi_lock() and scsi_unlock() macros protect the sm_state and the
  * single queue element srb for write access */
 #define scsi_unlock(host)	spin_unlock_irq(host->host_lock)

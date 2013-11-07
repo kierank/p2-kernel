@@ -1,6 +1,7 @@
 #
 # SATA/PATA driver configuration
 #
+## $Id: Kconfig 7336 2010-06-03 04:40:50Z Noguchi Isao $
 
 menuconfig ATA
 	tristate "Serial ATA (prod) and Parallel ATA (experimental) drivers"
@@ -48,6 +49,32 @@ config SATA_PMP
 	  This option adds support for SATA Port Multipliers
 	  (the SATA version of an ethernet hub, or SAS expander).
 
+
+## 2010/04/25, added by Panasonic --->
+
+config SATA_EXTENTION
+    bool "Enables SATA extensions"
+    default n
+    help
+	  This option enables extensions for SATA.
+
+	  If unsure, say N.
+
+if SATA_EXTENTION
+
+config SATA_EH_SPECIAL_RECOVERY
+    bool "Enables special recovery from fatal I/O error in error handler"
+    default n
+    help
+	  This option enables special recovery from fatal I/O error in error handler.
+
+	  If unsure, say N.
+
+endif # SATA_EXTENTION
+
+## <--- 2010/04/25, added by Panasonic
+
+
 config SATA_AHCI
 	tristate "AHCI SATA support"
 	depends on PCI
@@ -72,6 +99,89 @@ config SATA_FSL
 	  It can be found on MPC837x and MPC8315.
 
 	  If unsure, say N.
+
+## 2010/04/01, added by Panasonic >>>>
+if SATA_FSL
+
+config SATA_FSL_EXTENSION
+    bool "Extensions for Freescale SATA"
+    default n
+    depends on SATA_EXTENTION
+	help
+	  This option enables extensions for Freescale SATA controller.
+	  It can be found on MPC837x and MPC8315.
+
+	  If unsure, say N.
+
+config SATA_FSL_TX_AMP_CTRL
+    bool "Enables setting tx amplitude"
+    default n
+    depends on PPC_MPC831x && SATA_FSL_EXTENSION  
+	help
+	  This option enables setting tx amplitude by devicetree.
+	  It can be found on MPC831x(MPC8315).
+
+	  If unsure, say N.
+
+
+config SATA_FSL_RX_FIFO_SIZE
+    bool "Enables setting size of RxFIFO"
+    default n
+    depends on SATA_FSL_EXTENSION  
+	help
+	  This option enables setting size of RxFIFO by devicetree.
+
+	  If unsure, say N.
+
+
+endif # SATA_FSL
+## <<<< 2010/04/01, added by Panasonic
+
+
+## 2010/06/03, added by Panasonic ==>
+if SATA_FSL_EXTENSION
+
+config SATA_FSL_LIMIT_SPEED
+    bool "Enables limitting link-speed"
+    default n
+    help
+	  This option enables limitting link speed.
+
+	  If unsure, say N.
+
+if SATA_FSL_LIMIT_SPEED
+
+config SATA_FSL_LIMIT_SPEED_OF
+    bool "Get link-speed setting from OF description"
+    default y
+    depends on PPC_OF
+    help
+	  This option provides a link-speed parsing function from OF
+	  description
+
+	  If unsure, say N.
+
+choice SATA_FSL_LIMIT_SPEED_SETTING
+    prompt "Select link-speed for all ports"
+    depends on !SATA_FSL_LIMIT_SPEED_OF
+    default SATA_FSL_NON_LIMIT_SPEED
+
+config SATA_FSL_NON_LIMIT_SPEED
+    bool "NO limitting"
+
+config SATA_FSL_LIMIT_SPEED_GEN1
+    bool "Max 1.5 Gbps"
+
+config SATA_FSL_LIMIT_SPEED_GEN2
+    bool "Max 3.0 Gbps"
+
+endchoice
+
+endif #  && SATA_FSL_LIMIT_SPEED
+
+endif # SATA_FSL_EXTENSION
+## <== 2010/06/03, added by Panasonic
+
 
 config ATA_SFF
 	bool "ATA SFF support"

@@ -25,6 +25,7 @@
  */
 
 /*****************************************************************************/
+/* $Id: usbdevice_fs.h 13583 2011-03-30 06:45:35Z Noguchi Isao $ */
 
 #ifndef _LINUX_USBDEVICE_FS_H
 #define _LINUX_USBDEVICE_FS_H
@@ -33,6 +34,16 @@
 #include <linux/magic.h>
 
 /* --------------------------------------------------------------------- */
+
+/* 2010/6/15, added by Panasonic (SAV) */
+#ifndef __KERNEL__
+
+/* 2011/2/1, modified by Panasonic (SAV) */
+#ifndef __user
+#define __user
+#endif  /* __user */
+
+#endif  /* __KERNEL__ */
 
 /* usbdevfs ioctl codes */
 
@@ -124,6 +135,25 @@ struct usbdevfs_hub_portinfo {
 	char port [127];	/* e.g. port 3 connects to device 27 */
 };
 
+/* 2010/6/15, added by Panasonic */
+/*
+ * for ioctl(USBDEVFS_HUB_PORTTEST)
+ */
+struct usbdevfs_hub_porttest {
+    int port;                   /* test port */
+    int mode;                   /* test mode */
+};
+
+/* 2010/6/29, added by Panasonic */
+/*
+ * for ioctl(USBDEVFS_HUB_PORTSTATUS)
+ */
+struct usbdevfs_hub_portstatus {
+    int port;                     /* target port */
+    unsigned short status;        /* port status */
+    unsigned short change;        /* port change */
+};
+
 #ifdef __KERNEL__
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
@@ -175,4 +205,17 @@ struct usbdevfs_ioctl32 {
 #define USBDEVFS_CLEAR_HALT        _IOR('U', 21, unsigned int)
 #define USBDEVFS_DISCONNECT        _IO('U', 22)
 #define USBDEVFS_CONNECT           _IO('U', 23)
+
+/* 2010/6/15, added by Panasonic */
+#define USBDEVFS_HUB_PORTTEST       _IOW('U', 32, struct usbdevfs_hub_porttest)
+
+/* 2010/6/29, added by Panasonic */
+#define USBDEVFS_HUB_PORTSTATUS     _IOWR('U', 33, struct usbdevfs_hub_portstatus)
+
+/* 2011/3/29, added by Panasonic */
+#define USBDEVFS_HUB_PORT_RESET       _IOW('U', 34, unsigned int)
+#define USBDEVFS_HUB_PORT_DISABLE     _IOW('U', 35, unsigned int)
+#define USBDEVFS_HUB_PORT_DISCONNECT _IOW('U', 36, unsigned int)
+
+
 #endif /* _LINUX_USBDEVICE_FS_H */

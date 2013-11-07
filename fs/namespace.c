@@ -26,6 +26,7 @@
 #include <linux/mount.h>
 #include <linux/ramfs.h>
 #include <linux/log2.h>
+#include <linux/genhd.h> /* Added by Panasonic for DWM */
 #include <linux/idr.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -1115,6 +1116,8 @@ static int do_umount(struct vfsmount *mnt, int flags)
 	spin_unlock(&vfsmount_lock);
 	if (retval)
 		security_sb_umount_busy(mnt);
+
+	blkdev_umount_fs(sb->s_bdev); /* Added by Panasonic for DWM */
 	up_write(&namespace_sem);
 	release_mounts(&umount_list);
 	return retval;
@@ -1705,6 +1708,13 @@ int do_add_mount(struct vfsmount *newmnt, struct path *path,
 	if (fslist) /* add to the specified expiration list */
 		list_add_tail(&newmnt->mnt_expire, fslist);
 
+	/* Added by Panasonic for DWM ----> */
+	if (newmnt->mnt_sb) {
+		struct block_device *bdev = newmnt->mnt_sb->s_bdev;
+		blkdev_mount_fs(bdev);
+	}
+	/* <---- Added by Panasonic for DWM */
+	
 	up_write(&namespace_sem);
 	return 0;
 

@@ -4,6 +4,8 @@
  * - get rid of some verify_areas and use __copy*user and __get/put_user
  *   for the ones that remain
  */
+/* $Id: scsi_ioctl.c 10436 2010-11-16 03:21:50Z Noguchi Isao $ */
+
 #include <linux/module.h>
 #include <linux/blkdev.h>
 #include <linux/interrupt.h>
@@ -85,15 +87,16 @@ static int ioctl_probe(struct Scsi_Host *host, void __user *buffer)
  * The output area is then filled in starting from the command byte. 
  */
 
-static int ioctl_internal_command(struct scsi_device *sdev, char *cmd,
-				  int timeout, int retries)
+/* Panasonic Modified */
+int ioctl_external_command(struct scsi_device *sdev, char *cmd,
+		void *buffer, unsigned bufflen, int timeout, int retries)
 {
 	int result;
 	struct scsi_sense_hdr sshdr;
 
 	SCSI_LOG_IOCTL(1, printk("Trying ioctl with scsi command %d\n", *cmd));
 
-	result = scsi_execute_req(sdev, cmd, DMA_NONE, NULL, 0,
+	result = scsi_execute_req(sdev, cmd, DMA_NONE, buffer, bufflen,
 				  &sshdr, timeout, retries);
 
 	SCSI_LOG_IOCTL(2, printk("Ioctl returned  0x%x\n", result));
@@ -130,6 +133,15 @@ static int ioctl_internal_command(struct scsi_device *sdev, char *cmd,
 	SCSI_LOG_IOCTL(2, printk("IOCTL Releasing command\n"));
 	return result;
 }
+/*--------------------*/
+
+/* Panasonic Modified */
+static int ioctl_internal_command(struct scsi_device *sdev, char *cmd,
+				  int timeout, int retries)
+{
+	return ioctl_external_command(sdev, cmd, NULL, 0, timeout, retries);
+}
+/*--------------------*/
 
 int scsi_set_medium_removal(struct scsi_device *sdev, char state)
 {
@@ -259,8 +271,55 @@ int scsi_ioctl(struct scsi_device *sdev, int cmd, void __user *arg)
 		scsi_cmd[4] = 0;
 		return ioctl_internal_command(sdev, scsi_cmd,
 				     START_STOP_TIMEOUT, NORMAL_RETRIES);
-        case SCSI_IOCTL_GET_PCI:
-                return scsi_ioctl_get_pci(sdev, arg);
+    case SCSI_IOCTL_GET_PCI:
+        return scsi_ioctl_get_pci(sdev, arg);
+/* 2010/4/8-13, added by Panasonic (SAV)
+   2010/10/6, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_BLK_ERROR
+    case SCSI_IOCTL_CHK_BLK_ERR:
+        {
+            int retval=0;
+            struct scsi_ioctl_blk_err status;
+            unsigned long flags;
+            spin_lock_irqsave(&(sdev->blk_err_lock),flags);
+            retval = sdev->blk_err_count;
+            memcpy(&status,&(sdev->blk_err_status), sizeof(struct scsi_ioctl_blk_err));
+            spin_unlock_irqrestore(&(sdev->blk_err_lock),flags);
+            if(copy_to_user((struct scsi_ioctl_blk_err __user *)arg, &status, sizeof(struct scsi_ioctl_blk_err)))
+                retval=-EFAULT;
+            return retval;
+        }
+    case SCSI_IOCTL_CLR_BLK_ERR:
+        {
+            unsigned long flags;
+            spin_lock_irqsave(&(sdev->blk_err_lock),flags);
+            sdev->blk_err_count=0;
+            memset(&(sdev->blk_err_status),0,sizeof(struct scsi_ioctl_blk_err));
+            spin_unlock_irqrestore(&(sdev->blk_err_lock),flags);
+            return 0;
+        }
+    case SCSI_IOCTL_SET_MAX_SECTORS: {
+        unsigned int max_sectors = (unsigned int)arg;
+        struct Scsi_Host *host = sdev->host;
+        if(host->sg_tablesize){
+            unsigned int limit = (host->sg_tablesize * PAGE_SIZE ) >> 9;
+            if(max_sectors>limit)
+                max_sectors = limit;
+        }
+        blk_queue_max_sectors(sdev->request_queue,
+                              max_sectors);
+        return 0;
+    }
+    case SCSI_IOCTL_GET_MAX_SECTORS: {
+        unsigned int max_sectors = sdev->request_queue->max_sectors;
+        if(copy_to_user((void __user *)arg, (void*)&max_sectors,
+                        sizeof(unsigned int)))
+                return -EFAULT;
+        return 0;
+    }
+#endif  /* CONFIG_P2PF_SCSI_DISK_BLK_ERROR */
+/* <--- 2010/4/8-13, added by Panasonic (SAV)
+   2010/10/6, modified by Panasonic (SAV) */
 	default:
 		if (sdev->host->hostt->ioctl)
 			return sdev->host->hostt->ioctl(sdev, cmd, arg);

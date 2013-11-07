@@ -1,5 +1,12 @@
+/* $Id: flash.h 11136 2010-12-14 05:30:50Z Noguchi Isao $ */
 #ifndef LINUX_SPI_FLASH_H
 #define LINUX_SPI_FLASH_H
+
+/* 2010/12/13, added by Panasonic (SAV) ---> */
+#include <linux/mtd/mtd.h>
+#include <linux/mtd/partitions.h>
+/* <--- 2010/12/13, added by Panasonic (SAV) */
+
 
 struct mtd_partition;
 
@@ -26,6 +33,9 @@ struct flash_platform_data {
 	char		*type;
 
 	/* we'll likely add more ... use JEDEC IDs, etc */
+
+    void *private;          /* 2010/12/13, added by Panasonic (SAV) */
+
 };
 
 #endif

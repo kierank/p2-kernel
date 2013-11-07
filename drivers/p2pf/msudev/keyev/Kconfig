@@ -1,0 +1,45 @@
+# drivers/p2pf/msudev/keyev/Kconfig
+# $Id: Kconfig 5704 2010-03-15 01:18:50Z Noguchi Isao $
+
+menuconfig MSUDEV_KEYEV
+    tristate "Support key event input device"
+    default n
+
+if MSUDEV_KEYEV
+
+
+config MSUDEV_KEYEV_FIXED_DEVNUM
+    boolean "Enabled to fixed major number"
+    default n
+
+config MSUDEV_KEYEV_FIXED_MAJOR
+    int "Major number"
+    depends on MSUDEV_KEYEV_FIXED_DEVNUM
+    default 245
+
+config MSUDEV_KEYEV_FIXED_MINOR
+    int "Minor number"
+    depends on MSUDEV_KEYEV_FIXED_DEVNUM
+    default 33
+
+choice
+    boolean "Select lower level device"
+    default MSUDEV_KEYEV_DEV_NONE
+
+config MSUDEV_KEYEV_DEV_GPIO
+    boolean "lower-level driver inplemented for GPIO"
+    depends on MSUDEV_KEYEV
+
+config MSUDEV_KEYEV_DEV_NONE
+    boolean "lower-level driver is NOT exit"
+    depends on MSUDEV_KEYEV
+
+endchoice
+
+config MSUDEV_KEYEV_PROC
+    boolean "Support /proc file for debug"
+    default n
+    depends on PROC_FS
+
+
+endif # MSUDEV_KEYEV

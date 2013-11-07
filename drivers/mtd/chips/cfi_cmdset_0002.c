@@ -158,9 +158,21 @@ static void fixup_use_write_buffers(struct mtd_info *mtd, void *param)
 {
 	struct map_info *map = mtd->priv;
 	struct cfi_private *cfi = map->fldrv_priv;
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+	struct cfi_pri_amdstd *extp = cfi->cmdset_priv;
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
+
 	if (cfi->cfiq->BufWriteTimeoutTyp) {
 		DEBUG(MTD_DEBUG_LEVEL1, "Using buffer write method\n" );
 		mtd->write = cfi_amdstd_write_buffers;
+
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+		if (extp->SiliconRevision >= 0x1C) {
+			mtd->writesize = 512;
+			mtd->flags &= ~MTD_BIT_WRITEABLE;
+			printk(KERN_INFO "Enabling Spansion 65nm mode, writesize = 512 bytes\n");
+		}
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
 	}
 }
 
@@ -320,7 +332,11 @@ struct mtd_info *cfi_cmdset_0002(struct map_info *map, int primary)
 		}
 
 		if (extp->MajorVersion != '1' ||
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+		    (extp->MinorVersion < '0' || extp->MinorVersion > '5')) {
+#else /* ! CONFIG_MTD_CFI_AMDSTD_S29GLS */
 		    (extp->MinorVersion < '0' || extp->MinorVersion > '4')) {
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
 			printk(KERN_ERR "  Unknown Amd/Fujitsu Extended Query "
 			       "version %c.%c.\n",  extp->MajorVersion,
 			       extp->MinorVersion);
@@ -1261,21 +1277,26 @@ static int cfi_amdstd_write_words(struct mtd_info *mtd, loff_t to, size_t len,
 }
 
 
-/*
- * FIXME: interleaved mode not tested, and probably not supported!
- */
 static int __xipram do_write_buffer(struct map_info *map, struct flchip *chip,
 				    unsigned long adr, const u_char *buf,
 				    int len)
 {
 	struct cfi_private *cfi = map->fldrv_priv;
 	unsigned long timeo = jiffies + HZ;
-	/* see comments in do_write_oneword() regarding uWriteTimeo. */
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+	/* see comments in do_write_oneword() regarding uWriteTimeout, 20ms */
+	unsigned long uWriteTimeout = ( HZ / 50 ) + 1;
+#else /* ! CONFIG_MTD_CFI_AMDSTD_S29GLS */
 	unsigned long uWriteTimeout = ( HZ / 1000 ) + 1;
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
 	int ret = -EIO;
 	unsigned long cmd_adr;
 	int z, words;
 	map_word datum;
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+	int prolog, epilog, buflen = len;
+	map_word pdat, edat;
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
 
 	adr += chip->start;
 	cmd_adr = adr;
@@ -1296,6 +1317,23 @@ static int __xipram do_write_buffer(struct map_info *map, struct flchip *chip,
 	ENABLE_VPP(map);
 	xip_disable(map, chip, cmd_adr);
 
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+	/* If start is not bus-aligned, prepend old contents of flash */
+	prolog = (adr & (map_bankwidth(map)-1));
+	if (prolog) {
+		adr -= prolog;
+		cmd_adr -= prolog;
+		len += prolog;
+		pdat = map_read(map, adr);
+	}
+	/* If end is not bus-aligned, append old contents of flash */
+	epilog = ((adr + len) & (map_bankwidth(map)-1));
+	if (epilog) {
+		len += map_bankwidth(map)-epilog;
+		edat = map_read(map, adr + len - map_bankwidth(map));
+	}
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
+        
 	cfi_send_gen_cmd(0xAA, cfi->addr_unlock1, chip->start, map, cfi, cfi->device_type, NULL);
 	cfi_send_gen_cmd(0x55, cfi->addr_unlock2, chip->start, map, cfi, cfi->device_type, NULL);
 	//cfi_send_gen_cmd(0xA0, cfi->addr_unlock1, chip->start, map, cfi, cfi->device_type, NULL);
@@ -1310,8 +1348,27 @@ static int __xipram do_write_buffer(struct map_info *map, struct flchip *chip,
 	map_write(map, CMD(words - 1), cmd_adr);
 	/* Write data */
 	z = 0;
+
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+	if (prolog) {
+		datum = map_word_load_partial(map, pdat, buf, prolog, 
+		         min_t(int, buflen, map_bankwidth(map) - prolog));
+		map_write(map, datum, adr);
+
+		z += map_bankwidth(map);
+		buf += map_bankwidth(map) - prolog;
+	}
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
+
 	while(z < words * map_bankwidth(map)) {
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+		if (epilog && z >= (words-1) * map_bankwidth(map))
+			datum = map_word_load_partial(map, edat, buf, 0, epilog);
+		else
+			datum = map_word_load(map, buf);
+#else /* ! CONFIG_MTD_CFI_AMDSTD_S29GLS */
 		datum = map_word_load(map, buf);
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
 		map_write(map, datum, adr + z);
 
 		z += map_bankwidth(map);
@@ -1360,8 +1417,14 @@ static int __xipram do_write_buffer(struct map_info *map, struct flchip *chip,
 
 	/* reset on all failures. */
 	map_write( map, CMD(0xF0), chip->start );
+
+#if defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
+	cfi_send_gen_cmd(0xAA, cfi->addr_unlock1, chip->start, map, cfi, cfi->device_type, NULL);
+	cfi_send_gen_cmd(0x55, cfi->addr_unlock2, chip->start, map, cfi, cfi->device_type, NULL);
+	cfi_send_gen_cmd(0xF0, cfi->addr_unlock1, chip->start, map, cfi, cfi->device_type, NULL);
+#endif /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
+
 	xip_enable(map, chip, adr);
-	/* FIXME - should have reset delay before continuing */
 
 	printk(KERN_WARNING "MTD %s(): software timeout\n",
 	       __func__ );
@@ -1393,6 +1456,7 @@ static int cfi_amdstd_write_buffers(struct mtd_info *mtd, loff_t to, size_t len,
 	chipnum = to >> cfi->chipshift;
 	ofs = to  - (chipnum << cfi->chipshift);
 
+#if ! defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
 	/* If it's not bus-aligned, do the first word write */
 	if (ofs & (map_bankwidth(map)-1)) {
 		size_t local_len = (-ofs)&(map_bankwidth(map)-1);
@@ -1413,16 +1477,23 @@ static int cfi_amdstd_write_buffers(struct mtd_info *mtd, loff_t to, size_t len,
 				return 0;
 		}
 	}
+#endif /* ! CONFIG_MTD_CFI_AMDSTD_S29GLS */
 
+#if ! defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
 	/* Write buffer is worth it only if more than one word to write... */
 	while (len >= map_bankwidth(map) * 2) {
+#else /* CONFIG_MTD_CFI_AMDSTD_S29GLS */
+	while (len) {
+#endif /* ! CONFIG_MTD_CFI_AMDSTD_S29GLS */
 		/* We must not cross write block boundaries */
 		int size = wbufsize - (ofs & (wbufsize-1));
 
 		if (size > len)
 			size = len;
+#if ! defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
 		if (size % map_bankwidth(map))
 			size -= size % map_bankwidth(map);
+#endif /* ! CONFIG_MTD_CFI_AMDSTD_S29GLS */
 
 		ret = do_write_buffer(map, &cfi->chips[chipnum],
 				      ofs, buf, size);
@@ -1442,6 +1513,7 @@ static int cfi_amdstd_write_buffers(struct mtd_info *mtd, loff_t to, size_t len,
 		}
 	}
 
+#if ! defined(CONFIG_MTD_CFI_AMDSTD_S29GLS)
 	if (len) {
 		size_t retlen_dregs = 0;
 
@@ -1451,6 +1523,7 @@ static int cfi_amdstd_write_buffers(struct mtd_info *mtd, loff_t to, size_t len,
 		*retlen += retlen_dregs;
 		return ret;
 	}
+#endif /* ! CONFIG_MTD_CFI_AMDSTD_S29GLS */
 
 	return 0;
 }

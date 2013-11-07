@@ -1,0 +1,32 @@
+# [SBG-SAV] Revised by Panasonic 2008-APR-01, for "ua" application
+# =====>
+config P2USB_BUFFER
+    tristate "Buffer Driver for P2 USB peripheral functionality (DEBUG)"
+    help
+      The Buffer Driver for P2 USB Mass Storage (USB Gadget).
+
+config BUFFER_DM
+    bool "Use DM"
+    depends on P2USB_BUFFER && DM
+
+menu "Buffer driver options"
+    depends on P2USB_BUFFER
+
+config BUFFER_SIZE_ORDER
+    int "Order of Buffer Size"
+    default 10
+    help
+      This parameter is the order of buffer size.
+      Default size is 10.
+
+config BUFFER_NUM
+    int "Block Number of Buffer"
+    default 3
+    help
+      This parameter is the block number of buffer.
+      Default number is 3.
+
+endmenu
+
+# <=====
+

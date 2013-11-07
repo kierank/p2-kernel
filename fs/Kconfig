@@ -796,9 +796,43 @@ config VFAT_FS
 	  To compile this as a module, choose M here: the module will be called
 	  vfat.
 
+config P2FAT_FS
+	tristate "P2FAT fs support"
+	select NLS
+	help
+	  Filesystem Specialized for P2Card.
+	  This filesystem supports "Direct Transfer" from/to PCI Devices.
+
+config SDFAT_FS
+	tristate "SDFAT fs support"
+	select NLS
+	help
+	  Filesystem Specialized for SD Card.
+	  It can makes Speed-Quarantee Write effective.
+
+if SDFAT_FS
+
+choice
+	prompt "SD Controller"
+	default SDFAT_USE_RICOH_R5C822
+	depends on SDFAT_FS
+
+config SDFAT_USE_RICOH_R5C822
+	bool "Ricoh R5C822 (for P2PF)"
+
+config SDFAT_USE_SM331
+	bool "SiliconMotion SM331 (for ICV)"
+
+config SDFAT_USE_OTHER
+	bool "Other"
+
+endchoice
+
+endif
+
 config FAT_DEFAULT_CODEPAGE
 	int "Default codepage for FAT"
-	depends on MSDOS_FS || VFAT_FS
+	depends on MSDOS_FS || VFAT_FS || P2FAT_FS || SDFAT_FS
 	default 437
 	help
 	  This option should be set to the codepage of your FAT filesystems.

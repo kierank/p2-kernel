@@ -1,0 +1,7 @@
+config ZION_HOSTIF
+	bool "Support HOST IF"
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+
+	  If unsure, say Y.

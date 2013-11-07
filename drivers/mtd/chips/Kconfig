@@ -196,6 +196,18 @@ config MTD_CFI_AMDSTD
 	  provides support for one of those command sets, used on chips
 	  including the AMD Am29LV320.
 
+## Added by Panasonic for S29GL-S
+config MTD_CFI_AMDSTD_S29GLS
+	bool "Support for S29GL-S"
+	depends on MTD_CFI_AMDSTD
+	default n
+	help
+	  This option enables support for S29GL-S, but does not guarantee
+	  support other flash memories.
+
+	  If unsure, say 'N'.
+##
+
 config MTD_CFI_STAA
 	tristate "Support for ST (Advanced Architecture) flash chips"
 	depends on MTD_GEN_PROBE

@@ -22,6 +22,7 @@
  *  as Documentation/DocBook/libata.*
  *
  */
+/* $Id: libata.h 6953 2010-05-18 07:50:14Z Noguchi Isao $ */
 
 #ifndef __LINUX_LIBATA_H__
 #define __LINUX_LIBATA_H__
@@ -56,7 +57,6 @@
 #undef ATA_VERBOSE_DEBUG	/* yet more debugging output */
 #undef ATA_IRQ_TRAP		/* define to ack screaming irqs */
 #undef ATA_NDEBUG		/* define to disable quick runtime checks */
-
 
 /* note: prints function name for you */
 #ifdef ATA_DEBUG
@@ -230,6 +230,12 @@ enum {
 	ATA_QCFLAG_QUIET	= (1 << 6), /* don't report device error */
 	ATA_QCFLAG_RETRY	= (1 << 7), /* retry after failure */
 
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+	ATA_QCFLAG_RETRY_ONCE	= (1 << 8), /* retry once after failure */
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
+
 	ATA_QCFLAG_FAILED	= (1 << 16), /* cmd failed and is owned by EH */
 	ATA_QCFLAG_SENSE_VALID	= (1 << 17), /* sense data valid */
 	ATA_QCFLAG_EH_SCHEDULED = (1 << 18), /* EH scheduled (obsolete) */
@@ -336,11 +342,18 @@ enum {
 	ATA_EHI_DID_RESET	= ATA_EHI_DID_SOFTRESET | ATA_EHI_DID_HARDRESET,
 
 	/* max tries if error condition is still set after ->error_handler */
-	ATA_EH_MAX_TRIES	= 5,
+/* P2PF TARGET DEPENDENT CODE (K277) -->    */
+/* Modified by Panasonic : 2009/03/13       */
+#if 1
+	ATA_EH_MAX_TRIES	= 3,
+#else
+	ATA_EH_MAX_TRIES    = 5,
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)    */
 
 	/* how hard are we gonna try to probe/recover devices */
-	ATA_PROBE_MAX_TRIES	= 3,
-	ATA_EH_DEV_TRIES	= 3,
+	ATA_PROBE_MAX_TRIES = 3,
+	ATA_EH_DEV_TRIES    = 3,
 	ATA_EH_PMP_TRIES	= 5,
 	ATA_EH_PMP_LINK_TRIES	= 3,
 
@@ -827,6 +840,17 @@ struct ata_port_operations {
 	 * fields must be pointers.
 	 */
 	const struct ata_port_operations	*inherits;
+
+/* 2010/04/25, added by Panasonic ---> */
+#ifdef CONFIG_SATA_EH_SPECIAL_RECOVERY
+    /* 
+     * For special recovery from fatal i/o error in eroor handler
+     *  @retval :   non-0   : recovery is done
+     *              0       : nothing to do
+     */
+	int (*eh_special_recovery)(struct ata_port *ap);
+#endif  /* CONFIG_SATA_EH_SPECIAL_RECOVERY */
+/* <--- 2010/04/25, added by Panasonic */
 };
 
 struct ata_port_info {
@@ -905,6 +929,11 @@ extern void ata_host_detach(struct ata_host *host);
 extern void ata_host_init(struct ata_host *, struct device *,
 			  unsigned long, struct ata_port_operations *);
 extern int ata_scsi_detect(struct scsi_host_template *sht);
+/* 2010/5/18, modified by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+extern int ata_get_devinfo(struct scsi_device *dev, void *devinfo);
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <== 2010/5/18, modified by Panasonic */
 extern int ata_scsi_ioctl(struct scsi_device *dev, int cmd, void __user *arg);
 extern int ata_scsi_queuecmd(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *));
 extern void ata_sas_port_destroy(struct ata_port *);
@@ -1099,6 +1128,27 @@ extern void ata_std_error_handler(struct ata_port *ap);
 extern const struct ata_port_operations ata_base_port_ops;
 extern const struct ata_port_operations sata_port_ops;
 
+/* 2010/5/18, modified by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+#define ATA_BASE_SHT(drv_name)					\
+	.module			= THIS_MODULE,			\
+	.name			= drv_name,			\
+    .get_devinfo    = ata_get_devinfo,     \
+	.ioctl			= ata_scsi_ioctl,		\
+	.queuecommand		= ata_scsi_queuecmd,		\
+	.can_queue		= ATA_DEF_QUEUE,		\
+	.this_id		= ATA_SHT_THIS_ID,		\
+	.cmd_per_lun		= ATA_SHT_CMD_PER_LUN,		\
+	.emulated		= ATA_SHT_EMULATED,		\
+	.use_clustering		= ATA_SHT_USE_CLUSTERING,	\
+	.proc_name		= drv_name,			\
+	.slave_configure	= ata_scsi_slave_config,	\
+	.slave_destroy		= ata_scsi_slave_destroy,	\
+	.bios_param		= ata_std_bios_param
+
+#else  /* !CONFIG_P2PF_SCSI_DISK_FUNC */
+
 #define ATA_BASE_SHT(drv_name)					\
 	.module			= THIS_MODULE,			\
 	.name			= drv_name,			\
@@ -1113,6 +1163,10 @@ extern const struct ata_port_operations sata_port_ops;
 	.slave_configure	= ata_scsi_slave_config,	\
 	.slave_destroy		= ata_scsi_slave_destroy,	\
 	.bios_param		= ata_std_bios_param
+
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <== 2010/5/18, modified by Panasonic */
+
 
 #define ATA_NCQ_SHT(drv_name)					\
 	ATA_BASE_SHT(drv_name),					\

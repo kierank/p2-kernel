@@ -337,15 +337,26 @@ EXPORT_SYMBOL_GPL(default_mtd_writev);
 
 static struct proc_dir_entry *proc_mtd;
 
+#if defined(CONFIG_MTD_SINGLEOPEN)  /* Add by Panasonic 2008/02/06 ----> */
+extern struct mtdchar_params_t mtdchar_prms[MAX_MTD_DEVICES];
+#endif /* CONFIG_MTD_SINGLEOPEN */  /* <---- Add by Panasonic 2008/02/06 */
+
 static inline int mtd_proc_info (char *buf, int i)
 {
 	struct mtd_info *this = mtd_table[i];
 
 	if (!this)
 		return 0;
-
+	
+#if defined(CONFIG_MTD_SINGLEOPEN) /* Modified by Panasonic 2008/02/06 ----> */
+	return sprintf(buf, "mtd%d: %8.8x %8.8x \"%s\" %d %d\n", i, this->size,
+		       this->erasesize, this->name,
+			   mtdchar_prms[i].count, mtdchar_prms[i].pid);
+	
+#else /* !CONFIG_MTD_SINGLEOPEN */
 	return sprintf(buf, "mtd%d: %8.8x %8.8x \"%s\"\n", i, this->size,
 		       this->erasesize, this->name);
+#endif /* CONFIG_MTD_SINGLEOPEN */ /* <---- Modified by Panasonic 2008/02/06 */
 }
 
 static int mtd_read_proc (char *page, char **start, off_t off, int count,
@@ -356,7 +367,11 @@ static int mtd_read_proc (char *page, char **start, off_t off, int count,
 
 	mutex_lock(&mtd_table_mutex);
 
+#if defined(CONFIG_MTD_SINGLEOPEN) /* Modified by Panasonic 2008/02/06 ----> */
+	len = sprintf(page, "dev:    size   erasesize  name     count  pid\n");
+#else /* !CONFIG_MTD_SINGLEOPEN */
 	len = sprintf(page, "dev:    size   erasesize  name\n");
+#endif /* CONFIG_MTD_SINGLEOPEN */ /* <---- Modified by Panasonic 2008/02/06 */
         for (i=0; i< MAX_MTD_DEVICES; i++) {
 
                 l = mtd_proc_info(page + len, i);
@@ -386,6 +401,11 @@ static int __init init_mtd(void)
 {
 	if ((proc_mtd = create_proc_entry( "mtd", 0, NULL )))
 		proc_mtd->read_proc = mtd_read_proc;
+
+#if defined(CONFIG_MTD_SINGLEOPEN) /* Add by Panasonic 2008/02/06 ----> */
+	printk( KERN_WARNING "MTD single open support\n" );
+#endif /* CONFIG_MTD_SINGLEOPEN */ /* <---- Add by Panasonic 2008/02/06 */
+	
 	return 0;
 }
 

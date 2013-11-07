@@ -619,6 +619,9 @@ int cpm1_gpiochip_add16(struct device_node *np)
 	gc->get = cpm1_gpio16_get;
 	gc->set = cpm1_gpio16_set;
 
+    /* 2009/12/1, Added by Panasonic */
+    gc->base = -1;              /* dynamic allocation of GPIOs */
+
 	return of_mm_gpiochip_add(np, mm_gc);
 }
 
@@ -727,6 +730,9 @@ int cpm1_gpiochip_add32(struct device_node *np)
 	gc->direction_output = cpm1_gpio32_dir_out;
 	gc->get = cpm1_gpio32_get;
 	gc->set = cpm1_gpio32_set;
+
+    /* 2009/12/1, Added by Panasonic */
+    gc->base = -1;              /* dynamic allocation of GPIOs */
 
 	return of_mm_gpiochip_add(np, mm_gc);
 }

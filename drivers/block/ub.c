@@ -1028,6 +1028,7 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 {
 	struct urb *urb = &sc->work_urb;
 	struct bulk_cs_wrap *bcs;
+    int endp; 
 	int len;
 	int rc;
 
@@ -1035,6 +1036,10 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		ub_state_done(sc, cmd, -ENODEV);
 		return;
 	}
+
+    endp = usb_pipeendpoint(sc->last_pipe);
+    if (usb_pipein(sc->last_pipe))
+        endp |= USB_DIR_IN; 
 
 	if (cmd->state == UB_CMDST_CLEAR) {
 		if (urb->status == -EPIPE) {
@@ -1051,9 +1056,7 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		 * We ignore the result for the halt clear.
 		 */
 
-		/* reset the endpoint toggle */
-		usb_settoggle(sc->dev, usb_pipeendpoint(sc->last_pipe),
-			usb_pipeout(sc->last_pipe), 0);
+		usb_reset_endpoint(sc->dev, endp);
 
 		ub_state_sense(sc, cmd);
 
@@ -1068,9 +1071,7 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		 * We ignore the result for the halt clear.
 		 */
 
-		/* reset the endpoint toggle */
-		usb_settoggle(sc->dev, usb_pipeendpoint(sc->last_pipe),
-			usb_pipeout(sc->last_pipe), 0);
+		usb_reset_endpoint(sc->dev, endp);
 
 		ub_state_stat(sc, cmd);
 
@@ -1085,9 +1086,7 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		 * We ignore the result for the halt clear.
 		 */
 
-		/* reset the endpoint toggle */
-		usb_settoggle(sc->dev, usb_pipeendpoint(sc->last_pipe),
-			usb_pipeout(sc->last_pipe), 0);
+		usb_reset_endpoint(sc->dev, endp);
 
 		ub_state_stat_counted(sc, cmd);
 
@@ -2111,8 +2110,7 @@ static int ub_probe_clear_stall(struct ub_dev *sc, int stalled_pipe)
 	del_timer_sync(&timer);
 	usb_kill_urb(&sc->work_urb);
 
-	/* reset the endpoint toggle */
-	usb_settoggle(sc->dev, endp, usb_pipeout(sc->last_pipe), 0);
+    usb_reset_endpoint(sc->dev, endp);
 
 	return 0;
 }

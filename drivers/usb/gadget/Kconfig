@@ -12,6 +12,7 @@
 # With help from a special transceiver and a "Mini-AB" jack, systems with
 # both kinds of controller can also support "USB On-the-Go" (CONFIG_USB_OTG).
 #
+## $Id: Kconfig 21639 2013-04-09 00:15:24Z Yasuyuki Matsumoto $
 
 menuconfig USB_GADGET
 	tristate "USB Gadget Support"
@@ -82,8 +83,51 @@ config USB_GADGET_DEBUG_FS
 config	USB_GADGET_SELECTED
 	boolean
 
+## 2011/6/8, Added by Panasonic (PAVBU) --->
+
 #
-# USB Peripheral Controller Support
+# UDCDEV
+#
+
+menuconfig USB_GADGET_UDCDEV
+    bool "USB-DEVICE Controller device (UDCDEV) support"
+    depends on USB_GADGET
+    default n
+    select USB_GADGET_KOBJECT
+    help 
+        USB Device Controller device (UDCDEV) support
+
+if USB_GADGET_UDCDEV
+
+config USB_GADGET_UDCDEV_FIXED_DEVNUM
+    boolean "Enabled to fixed major number"
+    default n
+
+config USB_GADGET_UDCDEV_FIXED_MAJOR
+    int "Major number"
+    depends on USB_GADGET_UDCDEV_FIXED_DEVNUM
+    default 245
+
+config USB_GADGET_UDCDEV_FIXED_MINOR
+    int "Minor number"
+    depends on USB_GADGET_UDCDEV_FIXED_DEVNUM
+    default 64
+
+config USB_GADGET_UDCDEV_PROC
+    boolean "Support /proc file for debug"
+    default n
+    depends on PROC_FS
+
+endif # USB_GADGET_UDCDEV
+
+config USB_GADGET_KOBJECT
+    bool
+    default n
+
+## <--- 2011/6/8, added by Panasonic (PAVBU)
+
+#
+# usb Peripheral Controller Support
 #
 choice
 	prompt "USB Peripheral Controller"
@@ -147,6 +191,12 @@ config USB_GADGET_FSL_USB2
 config USB_FSL_USB2
 	tristate
 	depends on USB_GADGET_FSL_USB2
+	default USB_GADGET
+	select USB_GADGET_SELECTED
+
+config USB_FSL_USB2_3D
+        tristate
+        depends on USB_GADGET_FSL_USB2 && USB_FSL_USB2 && USB_P2_MASS_STORAGE_3D
 	default USB_GADGET
 	select USB_GADGET_SELECTED
 
@@ -616,5 +666,65 @@ config USB_CDC_COMPOSITE
 # - none yet
 
 endchoice
+
+
+# [SBG-SAV] Revised by Panasonic 2008-APR-01, for "ua" application
+config USB_P2_MASS_STORAGE
+    tristate "Mass Storage Gadget for (P2 DEBUG)"
+    help
+      The Mass Storage Gadget acts as a USB Mass Storage P2 drive.
+
+config USB_P2_MASS_STORAGE_3D
+    tristate "Mass Storage Gadget for (P2 3DMODE)"
+    depends on USB_P2_MASS_STORAGE
+    help
+      The Mass Storage Gadget acts as a USB Mass Storage P2 3DMODE.
+
+if USB_P2_MASS_STORAGE
+
+config P2USB_DRIVER_DESC
+	string "USB driver descriptor"
+	default "P2 unknown"
+	help
+	  USB driver descriptor for the device.
+
+config P2USB_DEVICE_PRODUCT_NUM
+	hex "USB device product number"
+	default 0xFFFF
+	help
+	  USB device product number for the device.
+
+config P2USB_MAX_USB_POWER
+	int "USB device max device power"
+	default 10
+	help
+	  The value of USB device max device power (mA).
+	  If select Self-power mode, it force sets "1".
+
+config P2USB_LUN
+	int "The number of USB LUNs on the device (slot number - 1)"
+	default 5
+	help
+	  This parameter is the number of USB LUNs on the device.
+	  Please set card slot number - 1.
+
+choice
+	prompt "Power mode"
+	help
+	  Choose USB power mode: Bus-power, Self-power, or both mode.
+
+config P2USB_BUS_SELF_POWER
+	bool "Bus-power and Self-power mode"
+
+config P2USB_BUS_POWER
+	bool "Bus-power mode"
+
+config P2USB_SELF_POWER
+	bool "Self-power mode"
+
+endchoice
+
+endif # USB_P2_MASS_STORAGE
+
 
 endif # USB_GADGET

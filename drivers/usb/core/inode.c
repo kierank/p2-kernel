@@ -24,6 +24,7 @@
  *   0.1  04.01.2000  Created
  *   0.2  10.12.2001  converted to use the vfs layer better
  */
+/* $Id: inode.c 9139 2010-09-14 00:43:11Z Noguchi Isao $ */
 
 /*****************************************************************************/
 
@@ -39,6 +40,7 @@
 #include <linux/parser.h>
 #include <linux/notifier.h>
 #include <linux/seq_file.h>
+#include <linux/smp_lock.h>
 #include <asm/byteorder.h>
 #include "usb.h"
 #include "hcd.h"
@@ -97,6 +99,7 @@ enum {
 	Opt_err,
 };
 
+/* static const match_table_t tokens = { */
 static match_table_t tokens = {
 	{Opt_devuid, "devuid=%u"},
 	{Opt_devgid, "devgid=%u"},
@@ -180,8 +183,8 @@ static int parse_options(struct super_block *s, char *data)
 			listmode = option & S_IRWXUGO;
 			break;
 		default:
-			err("usbfs: unrecognised mount option \"%s\" "
-			    "or missing value\n", p);
+			printk(KERN_ERR "usbfs: unrecognised mount option "
+			       "\"%s\" or missing value\n", p);
 			return -EINVAL;
 		}
 	}
@@ -240,7 +243,9 @@ static void update_sb(struct super_block *sb)
 				update_special(bus);
 				break;
 			default:
-				warn("Unknown node %s mode %x found on remount!\n",bus->d_name.name,bus->d_inode->i_mode);
+				printk(KERN_WARNING "usbfs: Unknown node %s "
+				       "mode %x found on remount!\n",
+				       bus->d_name.name, bus->d_inode->i_mode);
 				break;
 			}
 		}
@@ -259,12 +264,16 @@ static int remount(struct super_block *sb, int *flags, char *data)
 		return 0;
 
 	if (parse_options(sb, data)) {
-		warn("usbfs: mount parameter error:");
+		printk(KERN_WARNING "usbfs: mount parameter error.\n");
 		return -EINVAL;
 	}
 
+	lock_kernel();
+
 	if (usbfs_mount && usbfs_mount->mnt_sb)
 		update_sb(usbfs_mount->mnt_sb);
+
+	unlock_kernel();
 
 	return 0;
 }
@@ -275,9 +284,8 @@ static struct inode *usbfs_get_inode (struct super_block *sb, int mode, dev_t de
 
 	if (inode) {
 		inode->i_mode = mode;
-		inode->i_uid = current->fsuid;
-		inode->i_gid = current->fsgid;
-		inode->i_blocks = 0;
+		inode->i_uid = current_fsuid();
+		inode->i_gid = current_fsgid();
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 		switch (mode & S_IFMT) {
 		default:
@@ -510,13 +518,17 @@ static int fs_create_by_name (const char *name, mode_t mode,
 	*dentry = NULL;
 	mutex_lock(&parent->d_inode->i_mutex);
 	*dentry = lookup_one_len(name, parent, strlen(name));
-	if (!IS_ERR(dentry)) {
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic for bug-fix */
+/* 	if (!IS_ERR(dentry)) { */
+	if (!IS_ERR(*dentry)) {
 		if ((mode & S_IFMT) == S_IFDIR)
 			error = usbfs_mkdir (parent->d_inode, *dentry, mode);
 		else 
 			error = usbfs_create (parent->d_inode, *dentry, mode);
 	} else
-		error = PTR_ERR(dentry);
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic for bug-fix */
+/* 		error = PTR_ERR(dentry); */
+		error = PTR_ERR(*dentry);
 	mutex_unlock(&parent->d_inode->i_mutex);
 
 	return error;
@@ -599,7 +611,7 @@ static int create_special_files (void)
 	/* create the devices special file */
 	retval = simple_pin_fs(&usb_fs_type, &usbfs_mount, &usbfs_mount_count);
 	if (retval) {
-		err ("Unable to get usbfs mount");
+		printk(KERN_ERR "Unable to get usbfs mount\n");
 		goto exit;
 	}
 
@@ -611,7 +623,7 @@ static int create_special_files (void)
 					       NULL, &usbfs_devices_fops,
 					       listuid, listgid);
 	if (devices_usbfs_dentry == NULL) {
-		err ("Unable to create devices usbfs file");
+		printk(KERN_ERR "Unable to create devices usbfs file\n");
 		retval = -ENODEV;
 		goto error_clean_mounts;
 	}
@@ -663,7 +675,7 @@ static void usbfs_add_bus(struct usb_bus *bus)
 	bus->usbfs_dentry = fs_create_file (name, busmode | S_IFDIR, parent,
 					    bus, NULL, busuid, busgid);
 	if (bus->usbfs_dentry == NULL) {
-		err ("error creating usbfs bus entry");
+		printk(KERN_ERR "Error creating usbfs bus entry\n");
 		return;
 	}
 }
@@ -694,7 +706,7 @@ static void usbfs_add_device(struct usb_device *dev)
 					    &usbdev_file_operations,
 					    devuid, devgid);
 	if (dev->usbfs_dentry == NULL) {
-		err ("error creating usbfs device entry");
+		printk(KERN_ERR "Error creating usbfs device entry\n");
 		return;
 	}
 
@@ -716,7 +728,6 @@ static void usbfs_remove_device(struct usb_device *dev)
 		fs_remove_file (dev->usbfs_dentry);
 		dev->usbfs_dentry = NULL;
 	}
-	usb_fs_classdev_common_remove(dev);
 }
 
 static int usbfs_notify(struct notifier_block *self, unsigned long action, void *dev)

@@ -1,4 +1,5 @@
 # drivers/mtd/maps/Kconfig
+## $Id: Kconfig 17806 2011-12-06 07:37:41Z Horita Seiji $
 
 menu "Mapping drivers for chip access"
 	depends on MTD!=n
@@ -111,6 +112,50 @@ config MTD_SUN_UFLASH
 	  which user-programmable flash chips are connected on various
 	  Sun Microsystems boardsets.  This driver will require CFI support
 	  in the kernel, so if you did not enable CFI previously, do that now.
+                                                                                
+config MTD_MPC8313ERDB
+        tristate "CFI Flash device map on MPC8313E RDB support"
+#        depends on 83xx && MTD_CFI && MTD_PARTITIONS
+        depends on MTD_CFI && MTD_PARTITIONS
+        help
+          Freescale MPC8313ERDB board uses CFI compliant flash.
+
+# Added by Panasonic
+config MTD_AJ_HPM200
+        tristate "CFI Flash device map on Panasonic AJ-HPM200 support"
+        depends on MTD_CFI && MTD_PARTITIONS
+        help
+          AJ-HPM200 board uses CFI compliant flash.
+
+config MTD_P2PF_K286
+        tristate "CFI Flash device map on Panasonic K286(AJ-HPD2500) support"
+        depends on MTD_CFI && MTD_PARTITIONS
+        help
+          K286(AJ-HPD2500) board uses CFI compliant flash.
+
+config MTD_AJ_PCD2
+        tristate "CFI Flash device map on Panasonic AJ-PCD2 support"
+        depends on MTD_CFI && MTD_PARTITIONS
+        help
+          AJ-PCD2 board uses CFI compliant flash.
+
+config MTD_AG_HMC80
+        tristate "CFI Flash device map on Panasonic AG-HMC80 support"
+        depends on MTD_CFI && MTD_PARTITIONS
+        help
+          AG-HMC80 board uses CFI compliant flash.
+
+config MTD_AJ_HPX3100
+        tristate "CFI Flash device map on Panasonic AJ-HPX3100 support"
+        depends on MTD_CFI && MTD_PARTITIONS
+        help
+          AJ-HPX3100 board uses CFI compliant flash.
+
+config MTD_AG_3DP1
+        tristate "CFI Flash device map on Panasonic AG-3DP1 support"
+        depends on MTD_CFI && MTD_PARTITIONS
+        help
+          AG-3DP1 board uses CFI compliant flash.
 
 config MTD_SC520CDP
 	tristate "CFI Flash device mapped on AMD SC520 CDP"

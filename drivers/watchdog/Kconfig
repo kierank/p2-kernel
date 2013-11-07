@@ -1,6 +1,7 @@
 #
 # Watchdog device configuration
 #
+## $Id: Kconfig 6388 2010-04-14 06:20:30Z Noguchi Isao $
 
 menuconfig WATCHDOG
 	bool "Watchdog Timer Support"
@@ -54,6 +55,15 @@ config SOFT_WATCHDOG
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called softdog.
+
+# P2 platform
+
+config P2MSU_WDT
+	tristate "P2MSU Watchdog Timer"
+	depends on PPC_8xx || PPC_83xx || PPC_86xx
+	help
+	  This driver is for a P2MSU watchdog that exists on P2 platform.
+
 
 # ALPHA Architecture
 

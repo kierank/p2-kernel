@@ -1,3 +1,5 @@
+/* $Id: gpio.h 11201 2010-12-15 23:57:24Z Noguchi Isao $ */
+
 #ifndef _ASM_GENERIC_GPIO_H
 #define _ASM_GENERIC_GPIO_H
 
@@ -17,15 +19,32 @@
  * smaller range 0..ARCH_NR_GPIOS-1.
  */
 
+/* 2010/3/17, Modified by Panasonic >>>> */
+
 #ifndef ARCH_NR_GPIOS
+#ifdef CONFIG_NR_GPIOS
+#define ARCH_NR_GPIOS   CONFIG_NR_GPIOS
+#else  /* !CONFIG_NR_GPIOS */
 #define ARCH_NR_GPIOS		256
+#endif  /* CONFIG_NR_GPIOS */
 #endif
+
+// original
+/* #ifndef ARCH_NR_GPIOS */
+/* #define ARCH_NR_GPIOS		256 */
+/* #endif */
+
+/* <<<< 2010/3/17, Modified by Panasonic */
 
 static inline int gpio_is_valid(int number)
 {
 	/* only some non-negative numbers are valid */
 	return ((unsigned)number) < ARCH_NR_GPIOS;
 }
+
+/* 2010/1/8, modified by Panasonic >>>>  */
+extern int gpio_is_valid_port(int number);
+/* <<<< 2010/1/8, modified by Panasonic  */
 
 struct seq_file;
 struct module;
@@ -75,10 +94,47 @@ struct gpio_chip {
 						unsigned offset, int value);
 	void			(*dbg_show)(struct seq_file *s,
 						struct gpio_chip *chip);
+/* 2010/3/17,added by Panasonic >>>> */
+	int			(*direction)(struct gpio_chip *chip,
+                             unsigned offset);
+/* <<<< 2010/3/17,added by Panasonic */
+/* 2010/12/15, added by Panasonic (SAV) ---> */
+	void			(*opendrain)(struct gpio_chip *chip,
+                                 unsigned offset, int value);
+/* <--- 2010/12/15, added by Panasonic (SAV) */
+
+/* 2009/12/25,added by Panasonic >>>> */
+#ifdef  CONFIG_GPIO_IRQ
+    int         (*init_irq)(struct gpio_chip *chip);
+    int         (*clean_irq)(struct gpio_chip *chip);
+    int         (*request_irq)(struct gpio_chip *chip, unsigned offset,
+                               void (*handler)(unsigned,void*),
+                               void *data);
+    int         (*free_irq)(struct gpio_chip *chip,
+                            unsigned offset);
+    int         (*enable_irq)(struct gpio_chip *chip,
+                              unsigned offset);        
+    int         (*disable_irq)(struct gpio_chip *chip,
+                               unsigned offset);
+    int         (*is_enabled_irq)(struct gpio_chip *chip,
+                              unsigned offset);        
+#endif  /* CONFIG_GPIO_IRQ */
+
+/* 2010/1/8, added by Panasonic >>>> */
+    int         (*is_valid)(struct gpio_chip *chip,
+						unsigned offset);
+/* <<<< 2010/1/8, added by Panasonic */
+
+    
 	int			base;
 	u16			ngpio;
 	unsigned		can_sleep:1;
 	unsigned		exported:1;
+
+/* 2009/12/25,added by Panasonic >>>> */
+#ifdef  CONFIG_GPIO_IRQ
+    unsigned    can_irq:1;
+#endif  /* CONFIG_GPIO_IRQ */
 };
 
 extern const char *gpiochip_is_requested(struct gpio_chip *chip,
@@ -102,6 +158,7 @@ extern int gpio_direction_output(unsigned gpio, int value);
 extern int gpio_get_value_cansleep(unsigned gpio);
 extern void gpio_set_value_cansleep(unsigned gpio, int value);
 
+extern void gpio_opendrain(unsigned gpio, int value); /* 2010/12/15, added by Panasonic (SAV) */
 
 /* A platform's <asm/gpio.h> code may want to inline the I/O calls when
  * the GPIO is constant and refers to some always-present controller,
@@ -111,7 +168,6 @@ extern int __gpio_get_value(unsigned gpio);
 extern void __gpio_set_value(unsigned gpio, int value);
 
 extern int __gpio_cansleep(unsigned gpio);
-
 
 #ifdef CONFIG_GPIO_SYSFS
 
@@ -124,6 +180,23 @@ extern void gpio_unexport(unsigned gpio);
 
 #endif	/* CONFIG_GPIO_SYSFS */
 
+/* 2009/12/25,added by Panasonic >>>> */
+#ifdef CONFIG_GPIO_IRQ
+
+/*
+ * optional GPIO interrupts support calls
+ */
+extern int gpio_is_valid_irq(unsigned gpio);
+extern int gpio_request_irq(unsigned gpio,
+                            void (*handler)(unsigned,void*),
+                            void *data); 
+extern int gpio_free_irq(unsigned gpio);
+extern int gpio_enable_irq(unsigned gpio);
+extern int gpio_disable_irq(unsigned gpio);
+extern int gpio_is_enabled_irq(unsigned gpio);
+
+#endif  /* CONFIG_GPIO_IRQ */
+
 #else	/* !CONFIG_HAVE_GPIO_LIB */
 
 static inline int gpio_is_valid(int number)
@@ -131,6 +204,13 @@ static inline int gpio_is_valid(int number)
 	/* only non-negative numbers are valid */
 	return number >= 0;
 }
+
+/* 2010/1/12,added by Panasonic >>>> */
+static inline int gpio_is_valid_port(int number)
+{
+	return 0;
+}
+/* <<<< 2010/1/12,added by Panasonic >>>> */
 
 /* platforms that don't directly support access to GPIOs through I2C, SPI,
  * or other blocking infrastructure can use these wrappers.
@@ -153,6 +233,13 @@ static inline void gpio_set_value_cansleep(unsigned gpio, int value)
 	gpio_set_value(gpio, value);
 }
 
+/* 2010/12/15, added by Panasonic (SAV) ---> */
+static inline void gpio_opendrain(unsigned gpio, int value)
+{
+}
+/* <--- 2010/12/15, added by Panasonic (SAV) */
+
+
 #endif /* !CONFIG_HAVE_GPIO_LIB */
 
 #ifndef CONFIG_GPIO_SYSFS
@@ -168,5 +255,46 @@ static inline void gpio_unexport(unsigned gpio)
 {
 }
 #endif	/* CONFIG_GPIO_SYSFS */
+
+/* 2009/12/25,added by Panasonic >>>> */
+#ifndef CONFIG_GPIO_IRQ
+
+/*
+ * optional GPIO interrupts support calls
+ */
+static inline int gpio_is_valid_irq(unsigned gpio)
+{
+	return -ENOSYS;
+}
+
+static inline int gpio_request_irq(unsigned gpio,
+                                   void (*handler)(unsigned,void*),
+                                   void *data)
+{
+	return -ENOSYS;
+}
+
+static inline int gpio_free_irq(unsigned gpio)
+{
+	return -ENOSYS;
+}
+
+static inline int gpio_enable_irq(unsigned gpio)
+{
+	return -ENOSYS;
+}
+
+static inline int gpio_disable_irq(unsigned gpio)
+{
+	return -ENOSYS;
+}
+
+static inline int gpio_is_enabled_irq(unsigned gpio)
+{
+	return -ENOSYS;
+}
+
+#endif  /* CONFIG_GPIO_IRQ */
+/* <<<< 2009/12/25,added by Panasonic */
 
 #endif /* _ASM_GENERIC_GPIO_H */

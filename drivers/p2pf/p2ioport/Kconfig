@@ -1,0 +1,64 @@
+# P2PF I/O port(inc. GPIO) access driver configuration
+## $Id: Kconfig 10661 2010-11-25 05:12:02Z Yoshioka Masaki $
+
+config P2IOPORTDRV
+	tristate "P2PF I/O port(GPIO) access driver"
+	---help---
+	  This option is for accessing I/O port and GPIO for P2PF.
+
+	  If unsure, say Y.
+
+
+if P2IOPORTDRV
+
+choice
+	prompt "Board type"
+	depends on P2IOPORTDRV
+
+config P2IOPORT_HPM200
+	bool "AJ-HPM200"
+
+config P2IOPORT_K286
+	bool "K286(AJ-HPD2500)"
+
+config P2IOPORT_K298
+	bool "K298(AJ-MSU10)"
+	select GENERIC_GPIO
+	select ARCH_REQUIRE_GPIOLIB
+	select PPC_83xx_GPIO
+	select CODECFPGA_GPIO
+	select P2IOPORT_GPIO_LIB
+
+config P2IOPORT_PCD2
+	bool "AJ-PCD2"
+
+config P2IOPORT_HMC80
+	bool "AG-HMC80"
+
+config P2IOPORT_HPX3100
+	bool "AJ-HPX3100"
+
+config P2IOPORT_K301
+	bool "AG-3DP1"
+
+config P2IOPORT_SAV8313BRB1
+	bool "SAV8313BRB1"
+
+#config P2IOPORT_MPC8313ERDB
+#	bool "MPC8313ERDB"
+
+config P2IOPORT_MPC837XERDB
+	bool "MPC837xERDB(black case)"
+
+endchoice
+
+config P2IOPORT_GPIO_LIB
+	bool
+	default n
+
+endif
+
+
+config P2IOPORT_MPC83XXGPIOINT
+	bool "MPC83XX GPIO INT support"
+	depends on P2IOPORTDRV

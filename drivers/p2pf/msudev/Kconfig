@@ -1,0 +1,27 @@
+# drivers/p2pf/msudev/Kconfig
+# $Id: Kconfig 5608 2010-03-09 08:03:31Z Noguchi Isao $
+
+menuconfig MSUDEV
+	bool "P2MSU devices support" 
+    default n
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+	  If unsure, say Y.
+
+if MSUDEV
+
+# ADC
+source "drivers/p2pf/msudev/adc/Kconfig"
+
+# KEY
+source "drivers/p2pf/msudev/keyev/Kconfig"
+
+# LED
+source "drivers/p2pf/msudev/led/Kconfig"
+
+# BUZZER
+source "drivers/p2pf/msudev/buzzer/Kconfig"
+
+endif # MSUDEV
+

@@ -7,6 +7,7 @@
  * (C) Copyright 2001 Brad Hards (bhards@bigpond.net.au)
  *
  */
+/* $Id: hub.c 19952 2012-03-14 04:45:05Z Noguchi Isao $ */
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -61,6 +62,11 @@ struct usb_hub {
 							status change */
 	unsigned long		busy_bits[1];	/* ports being reset or
 							resumed */
+
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic */
+	unsigned long		removed_bits[1]; /* ports with a "removed"
+							device present */
+
 #if USB_MAXCHILDREN > 31 /* 8*sizeof(unsigned long) - 1 */
 #error event_bits[] is too short!
 #endif
@@ -77,6 +83,7 @@ struct usb_hub {
 	unsigned		has_indicators:1;
 	u8			indicator[USB_MAXCHILDREN];
 	struct delayed_work	leds;
+	struct delayed_work	init_work;
 };
 
 
@@ -98,6 +105,17 @@ static struct task_struct *khubd_task;
 static int blinkenlights = 0;
 module_param (blinkenlights, bool, S_IRUGO);
 MODULE_PARM_DESC (blinkenlights, "true to cycle leds on hubs");
+
+/*
+ * Device SATA8000 FW1.0 from DATAST0R Technology Corp requires about
+ * 10 seconds to send reply for the initial 64-byte descriptor request.
+ */
+/* define initial 64-byte descriptor request timeout in milliseconds */
+static int initial_descriptor_timeout = USB_CTRL_GET_TIMEOUT;
+module_param(initial_descriptor_timeout, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(initial_descriptor_timeout,
+		"initial 64-byte descriptor request timeout in milliseconds "
+		"(default 5000 - 5.0 seconds)");
 
 /*
  * As of 2.6.10 we introduce a new USB device initialization scheme which
@@ -132,42 +150,103 @@ EXPORT_SYMBOL_GPL(ehci_cf_port_reset_rwsem);
 
 #define HUB_DEBOUNCE_TIMEOUT	1500
 #define HUB_DEBOUNCE_STEP	  25
-#define HUB_DEBOUNCE_STABLE	 100
+/* Modified by Panasonic, 2009/4/17 >>>>> */
+/* #define HUB_DEBOUNCE_STABLE	 100 */
+#define HUB_DEBOUNCE_STABLE	 200
+/* <<<<< Modified by Panasonic, 2009/4/17 */
 
 
 static int usb_reset_and_verify_device(struct usb_device *udev);
 
 static inline char *portspeed(int portstatus)
 {
+    /* Added by Panasonic, 2009/4/17 >>>>> */
+    /* Unknown speed  */
+    if (portstatus & (1 << USB_PORT_FEAT_UNKNOWNSPEED))
+        return "? Mb/s";
+    /* <<<< Added by Panasonic, 2009/4/17 */
+
 	if (portstatus & (1 << USB_PORT_FEAT_HIGHSPEED))
     		return "480 Mb/s";
 	else if (portstatus & (1 << USB_PORT_FEAT_LOWSPEED))
 		return "1.5 Mb/s";
+	else if (portstatus & (1 << USB_PORT_FEAT_SUPERSPEED))
+		return "5.0 Gb/s";
 	else
 		return "12 Mb/s";
 }
 
 /* Note that hdev or one of its children must be locked! */
-static inline struct usb_hub *hdev_to_hub(struct usb_device *hdev)
+static /*inline*/ struct usb_hub *hdev_to_hub(struct usb_device *hdev)
 {
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic */
+	if (!hdev || !hdev->actconfig)
+		return NULL;
+
 	return usb_get_intfdata(hdev->actconfig->interface[0]);
 }
 
-/* USB 2.0 spec Section 11.24.4.5 */
-static int get_hub_descriptor(struct usb_device *hdev, void *data, int size)
+/* 2010/9/2, modified by Panasonic to support USB3.0 external HUB ---> */
+
+/* USB 3.0 spec Section 10.14.2.3 */
+static int get_ss_hub_descriptor(struct usb_device *hdev, void *data, int size)
 {
 	int i, ret;
 
 	for (i = 0; i < 3; i++) {
 		ret = usb_control_msg(hdev, usb_rcvctrlpipe(hdev, 0),
 			USB_REQ_GET_DESCRIPTOR, USB_DIR_IN | USB_RT_HUB,
-			USB_DT_HUB << 8, 0, data, size,
+			USB_DT_SS_HUB << 8, 0, data, size,
 			USB_CTRL_GET_TIMEOUT);
-		if (ret >= (USB_DT_HUB_NONVAR_SIZE + 2))
+		if (ret >= (USB_DT_SS_HUB_NONVAR_SIZE))
 			return ret;
 	}
 	return -EINVAL;
 }
+
+/* USB 2.0 spec Section 11.24.4.5 */
+static int get_hub_descriptor(struct usb_device *hdev, void *data, int size)
+{
+	int ret;
+
+    if(NULL!=hdev->parent && (le16_to_cpu(hdev->descriptor.bcdUSB)>=0x0300)) {
+        struct usb_ss_hub_descriptor ss_descriptor, *ss_desc = &ss_descriptor;
+        struct usb_hub_descriptor *desc = (struct usb_hub_descriptor *)data;
+
+        ret = get_ss_hub_descriptor(hdev, &ss_descriptor, sizeof(struct usb_ss_hub_descriptor));
+        if(ret<0)
+            return -EINVAL;
+
+        /* USB 3.0 hubs have a different descriptor, but we fake this for now */
+        desc->bDescriptorType = USB_DT_HUB;
+        desc->bPwrOn2PwrGood = ss_desc->bPwrOn2PwrGood;
+        desc->bHubContrCurrent = ss_desc->bHubContrCurrent;
+        desc->bNbrPorts = ss_desc->bNbrPorts;
+        desc->bDescLength = USB_DT_HUB_NONVAR_SIZE + 2;
+        desc->wHubCharacteristics = ss_desc->wHubCharacteristics;
+        desc->DeviceRemovable[0] = ss_desc->DeviceRemovable[0];
+        desc->DeviceRemovable[1] = ss_desc->DeviceRemovable[1];
+
+        return (int)desc->bDescLength;
+
+    } else {
+        int i;
+        for (i = 0; i < 3; i++) {
+            ret = usb_control_msg(hdev, usb_rcvctrlpipe(hdev, 0),
+                                  USB_REQ_GET_DESCRIPTOR, USB_DIR_IN | USB_RT_HUB,
+                                  USB_DT_HUB << 8, 0, data, size,
+                                  USB_CTRL_GET_TIMEOUT);
+            if (ret >= (USB_DT_HUB_NONVAR_SIZE + 2))
+                return ret;
+        }
+        return -EINVAL;
+    }
+}
+
+static int set_ss_port_feature(struct usb_device *hdev, int port1, int feature);
+
+/* <--- 2010/9/2, modified by Panasonic to support USB3.0 external HUB */
+
 
 /*
  * USB 2.0 spec Section 11.24.2.1
@@ -178,13 +257,61 @@ static int clear_hub_feature(struct usb_device *hdev, int feature)
 		USB_REQ_CLEAR_FEATURE, USB_RT_HUB, feature, 0, NULL, 0, 1000);
 }
 
+
+/* 2010/9/2, modified by Panasonic to support USB3.0 external HUB ---> */
+
+/*
+ * USB 3.0 spec Section 11.24.2.2
+ */
+static int clear_ss_port_feature(struct usb_device *hdev, int port1, int feature)
+{
+   return usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+                          USB_REQ_CLEAR_FEATURE, USB_RT_PORT, feature, port1,
+                          NULL, 0, 1000);
+}
+
 /*
  * USB 2.0 spec Section 11.24.2.2
  */
 static int clear_port_feature(struct usb_device *hdev, int port1, int feature)
 {
+    if(NULL!=hdev->parent && (le16_to_cpu(hdev->descriptor.bcdUSB)>=0x0300)) {
+        switch(feature) {
+        case USB_PORT_FEAT_ENABLE:
+            return set_ss_port_feature(hdev, (4<<8)|port1, USB_SS_PORT_FEAT_LINK_STATE);
+        case USB_PORT_FEAT_POWER:
+            return clear_ss_port_feature(hdev, port1, USB_SS_PORT_FEAT_POWER);
+        case USB_PORT_FEAT_C_CONNECTION:
+            return clear_ss_port_feature(hdev, port1, USB_SS_PORT_FEAT_C_CONNECTION);
+        case USB_PORT_FEAT_C_RESET:
+            clear_ss_port_feature(hdev, port1, USB_SS_PORT_FEAT_C_BH_RESET);
+            return clear_ss_port_feature(hdev, port1, USB_SS_PORT_FEAT_C_RESET);
+        case USB_PORT_FEAT_C_ENABLE:
+            return clear_ss_port_feature(hdev, port1, USB_SS_PORT_FEAT_C_LINK_STATE);
+        case USB_PORT_FEAT_C_OVER_CURRENT:
+            return clear_ss_port_feature(hdev, port1, USB_SS_PORT_FEAT_C_OVER_CURRENT);
+        case USB_PORT_FEAT_SUSPEND:
+        case USB_PORT_FEAT_C_SUSPEND:
+        case USB_PORT_FEAT_INDICATOR:
+            return 0;
+        default:
+            dev_err (&hdev->dev,"ERROR (%s): invalid feature=%d\n",__func__,feature);
+            return -EINVAL;
+        }
+    } else {
+        return usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+                               USB_REQ_CLEAR_FEATURE, USB_RT_PORT, feature, port1,
+                               NULL, 0, 1000);
+    }
+}
+
+/*
+ * USB 3.0 spec Section 10.14.2.10
+ */
+static int set_ss_port_feature(struct usb_device *hdev, int port1, int feature)
+{
 	return usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-		USB_REQ_CLEAR_FEATURE, USB_RT_PORT, feature, port1,
+		USB_REQ_SET_FEATURE, USB_RT_PORT, feature, port1,
 		NULL, 0, 1000);
 }
 
@@ -193,10 +320,35 @@ static int clear_port_feature(struct usb_device *hdev, int port1, int feature)
  */
 static int set_port_feature(struct usb_device *hdev, int port1, int feature)
 {
-	return usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
-		USB_REQ_SET_FEATURE, USB_RT_PORT, feature, port1,
-		NULL, 0, 1000);
+    if(NULL!=hdev->parent && (le16_to_cpu(hdev->descriptor.bcdUSB)>=0x0300)) {
+
+       switch(feature) {
+       case USB_PORT_FEAT_RESET:
+           return set_ss_port_feature(hdev, port1, USB_SS_PORT_FEAT_RESET);
+       case USB_PORT_FEAT_POWER:
+           return set_ss_port_feature(hdev, port1, USB_SS_PORT_FEAT_POWER);
+       case USB_PORT_FEAT_SUSPEND:
+       case USB_PORT_FEAT_TEST:
+       case USB_PORT_FEAT_INDICATOR:
+       case USB_PORT_FEAT_C_CONNECTION:
+       case USB_PORT_FEAT_C_RESET:
+       case USB_PORT_FEAT_C_ENABLE:
+       case USB_PORT_FEAT_C_SUSPEND:
+       case USB_PORT_FEAT_C_OVER_CURRENT:
+           return 0;
+       default:
+           dev_err (&hdev->dev,"ERROR (%s): invalid feature=%d\n",__func__,feature);
+           return -EINVAL;
+       }
+    } else {
+        return usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+                               USB_REQ_SET_FEATURE, USB_RT_PORT, feature, port1,
+                               NULL, 0, 1000);
+    }
 }
+
+/* <--- 2010/9/2, modified by Panasonic to support USB3.0 external HUB */
+
 
 /*
  * USB 2.0 spec Section 11.24.2.7.1.10 and table 11-7
@@ -318,6 +470,7 @@ static int get_hub_status(struct usb_device *hdev,
 
 /*
  * USB 2.0 spec Section 11.24.2.7
+ * USB 3.0 spec Section 10.14.2.6
  */
 static int get_port_status(struct usb_device *hdev, int port1,
 		struct usb_port_status *data)
@@ -336,6 +489,7 @@ static int hub_port_status(struct usb_hub *hub, int port1,
 		u16 *status, u16 *change)
 {
 	int ret;
+    struct usb_device *hdev = hub->hdev;
 
 	mutex_lock(&hub->status_mutex);
 	ret = get_port_status(hub->hdev, port1, &hub->status->port);
@@ -350,8 +504,78 @@ static int hub_port_status(struct usb_hub *hub, int port1,
 		ret = 0;
 	}
 	mutex_unlock(&hub->status_mutex);
+
+/* 2010/9/2, added by Panasonic to support USB3.0 external HUB ---> */
+
+    if(ret==0 && 
+       NULL!=hdev->parent && (le16_to_cpu(hdev->descriptor.bcdUSB)>=0x0300)){
+        u16 ss_status = *status;
+        u16 ss_change = *change;
+        u16 new_status =0, new_change=0;
+
+        /* portstatus */
+        if(ss_status & USB_SS_PORT_STAT_CONNECTION)
+            new_status |= USB_PORT_STAT_CONNECTION;
+        if(ss_status & USB_SS_PORT_STAT_ENABLE)
+            new_status |= USB_PORT_STAT_ENABLE;
+        if(ss_status & USB_SS_PORT_STAT_OVERCURRENT)
+            new_status |= USB_PORT_STAT_OVERCURRENT;
+        if(ss_status & USB_SS_PORT_STAT_RESET)
+            new_status |= USB_PORT_STAT_RESET;
+        if(ss_status & USB_SS_PORT_STAT_POWER)
+            new_status |= USB_PORT_STAT_POWER;
+        if((ss_status & USB_SS_PORT_STAT_SPEED_MASK)
+           == USB_SS_PORT_STAT_SPEED(0))
+            new_status |= USB_PORT_STAT_SUPER_SPEED;
+
+        /* portchange */
+        if(ss_change & USB_SS_PORT_STAT_C_CONNECTION)
+            new_change |= USB_PORT_STAT_C_CONNECTION;
+        if(ss_change & USB_SS_PORT_STAT_C_OVERCURRENT)
+            new_change |= USB_PORT_STAT_C_OVERCURRENT;
+        if(ss_change & (USB_SS_PORT_STAT_C_RESET|USB_SS_PORT_STAT_C_BH_RESET))
+            new_change |= USB_PORT_STAT_C_RESET;
+        if(ss_change & USB_SS_PORT_STAT_C_LINK_STATE)
+            new_change |= USB_PORT_STAT_C_ENABLE;
+
+		*status = new_status;
+		*change = new_change;
+    }
+
+/* <--- 2010/9/2, added by Panasonic to support USB3.0 external HUB */
+
 	return ret;
 }
+
+
+/* 2010/9/2, added by Panasonic to support USB3.0 external HUB ---> */
+/*
+ * USB 3.0 spec Section 10.14.2.9
+ */
+static int set_hub_depth(struct usb_device *hdev)
+{
+    int retval = 0;
+
+    /* external USB3.0 hub */
+    if(NULL!=hdev->parent && (le16_to_cpu(hdev->descriptor.bcdUSB)>=0x0300)){
+        int depth = hdev->level - 1;
+        if(depth<0||depth>4){
+            retval = -EINVAL;
+            dev_err(&hdev->dev,
+                    "%s failed: invalid depth = %d (err = %d)\n", __func__, depth, retval);
+            goto error;
+        }
+        dev_dbg(&hdev->dev,"SET_HUB_DEPTH : depth=%d\n",depth);
+        retval =usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
+                               SET_HUB_DEPTH, USB_RT_HUB, depth, 0,
+                               NULL, 0, 1000);
+    }
+
+ error:
+    return retval;
+}
+/* <--- 2010/9/2, added by Panasonic to support USB3.0 external HUB */
+
 
 static void kick_khubd(struct usb_hub *hub)
 {
@@ -370,8 +594,15 @@ static void kick_khubd(struct usb_hub *hub)
 
 void usb_kick_khubd(struct usb_device *hdev)
 {
+#if 0
 	/* FIXME: What if hdev isn't bound to the hub driver? */
 	kick_khubd(hdev_to_hub(hdev));
+#else  /* 2010/7/14, back-porting from 2.6.33 by Panasonic */
+	struct usb_hub *hub = hdev_to_hub(hdev);
+
+	if (hub)
+		kick_khubd(hub);
+#endif
 }
 
 
@@ -380,7 +611,7 @@ static void hub_irq(struct urb *urb)
 {
 	struct usb_hub *hub = urb->context;
 	int status = urb->status;
-	int i;
+	unsigned i;
 	unsigned long bits;
 
 	switch (status) {
@@ -425,7 +656,7 @@ resubmit:
 static inline int
 hub_clear_tt_buffer (struct usb_device *hdev, u16 devinfo, u16 tt)
 {
-	return usb_control_msg(hdev, usb_rcvctrlpipe(hdev, 0),
+	return usb_control_msg(hdev, usb_sndctrlpipe(hdev, 0),
 			       HUB_CLEAR_TT_BUFFER, USB_RT_PORT, devinfo,
 			       tt, NULL, 0, 1000);
 }
@@ -436,42 +667,47 @@ hub_clear_tt_buffer (struct usb_device *hdev, u16 devinfo, u16 tt)
  * talking to TTs must queue control transfers (not just bulk and iso), so
  * both can talk to the same hub concurrently.
  */
-static void hub_tt_kevent (struct work_struct *work)
+static void hub_tt_work(struct work_struct *work)
 {
 	struct usb_hub		*hub =
-		container_of(work, struct usb_hub, tt.kevent);
+		container_of(work, struct usb_hub, tt.clear_work);
 	unsigned long		flags;
 	int			limit = 100;
 
 	spin_lock_irqsave (&hub->tt.lock, flags);
 	while (--limit && !list_empty (&hub->tt.clear_list)) {
-		struct list_head	*temp;
+		struct list_head	*next;
 		struct usb_tt_clear	*clear;
 		struct usb_device	*hdev = hub->hdev;
+		const struct hc_driver	*drv;
 		int			status;
 
-		temp = hub->tt.clear_list.next;
-		clear = list_entry (temp, struct usb_tt_clear, clear_list);
+		next = hub->tt.clear_list.next;
+		clear = list_entry (next, struct usb_tt_clear, clear_list);
 		list_del (&clear->clear_list);
 
 		/* drop lock so HCD can concurrently report other TT errors */
 		spin_unlock_irqrestore (&hub->tt.lock, flags);
 		status = hub_clear_tt_buffer (hdev, clear->devinfo, clear->tt);
-		spin_lock_irqsave (&hub->tt.lock, flags);
-
 		if (status)
 			dev_err (&hdev->dev,
 				"clear tt %d (%04x) error %d\n",
 				clear->tt, clear->devinfo, status);
+
+		/* Tell the HCD, even if the operation failed */
+		drv = clear->hcd->driver;
+		if (drv->clear_tt_buffer_complete)
+			(drv->clear_tt_buffer_complete)(clear->hcd, clear->ep);
+
 		kfree(clear);
+		spin_lock_irqsave(&hub->tt.lock, flags);
 	}
 	spin_unlock_irqrestore (&hub->tt.lock, flags);
 }
 
 /**
- * usb_hub_tt_clear_buffer - clear control/bulk TT state in high speed hub
- * @udev: the device whose split transaction failed
- * @pipe: identifies the endpoint of the failed transaction
+ * usb_hub_clear_tt_buffer - clear control/bulk TT state in high speed hub
+ * @urb: an URB associated with the failed or incomplete split transaction
  *
  * High speed HCDs use this to tell the hub driver that some split control or
  * bulk transaction failed in a way that requires clearing internal state of
@@ -481,8 +717,10 @@ static void hub_tt_kevent (struct work_struct *work)
  * It may not be possible for that hub to handle additional full (or low)
  * speed transactions until that state is fully cleared out.
  */
-void usb_hub_tt_clear_buffer (struct usb_device *udev, int pipe)
+int usb_hub_clear_tt_buffer(struct urb *urb)
 {
+	struct usb_device	*udev = urb->dev;
+	int			pipe = urb->pipe;
 	struct usb_tt		*tt = udev->tt;
 	unsigned long		flags;
 	struct usb_tt_clear	*clear;
@@ -494,7 +732,7 @@ void usb_hub_tt_clear_buffer (struct usb_device *udev, int pipe)
 	if ((clear = kmalloc (sizeof *clear, GFP_ATOMIC)) == NULL) {
 		dev_err (&udev->dev, "can't save CLEAR_TT_BUFFER state\n");
 		/* FIXME recover somehow ... RESET_TT? */
-		return;
+		return -ENOMEM;
 	}
 
 	/* info that CLEAR_TT_BUFFER needs */
@@ -506,16 +744,54 @@ void usb_hub_tt_clear_buffer (struct usb_device *udev, int pipe)
 			: (USB_ENDPOINT_XFER_BULK << 11);
 	if (usb_pipein (pipe))
 		clear->devinfo |= 1 << 15;
-	
+
+	/* info for completion callback */
+	clear->hcd = bus_to_hcd(udev->bus);
+	clear->ep = urb->ep;
+
 	/* tell keventd to clear state for this TT */
 	spin_lock_irqsave (&tt->lock, flags);
 	list_add_tail (&clear->clear_list, &tt->clear_list);
-	schedule_work (&tt->kevent);
+	schedule_work(&tt->clear_work);
 	spin_unlock_irqrestore (&tt->lock, flags);
+	return 0;
 }
-EXPORT_SYMBOL_GPL(usb_hub_tt_clear_buffer);
+EXPORT_SYMBOL_GPL(usb_hub_clear_tt_buffer);
 
-static void hub_power_on(struct usb_hub *hub)
+/* If do_delay is false, return the number of milliseconds the caller
+ * needs to delay.
+ */
+static unsigned hub_power_on(struct usb_hub *hub, bool do_delay)
+{
+	int port1;
+	unsigned pgood_delay = hub->descriptor->bPwrOn2PwrGood * 2;
+	unsigned delay;
+	u16 wHubCharacteristics =
+			le16_to_cpu(hub->descriptor->wHubCharacteristics);
+
+	/* Enable power on each port.  Some hubs have reserved values
+	 * of LPSM (> 2) in their descriptors, even though they are
+	 * USB 2.0 hubs.  Some hubs do not implement port-power switching
+	 * but only emulate it.  In all cases, the ports won't work
+	 * unless we send these messages to the hub.
+	 */
+	if ((wHubCharacteristics & HUB_CHAR_LPSM) < 2)
+		dev_dbg(hub->intfdev, "enabling power on all ports\n");
+	else
+		dev_dbg(hub->intfdev, "trying to enable port power on "
+				"non-switchable hub\n");
+	for (port1 = 1; port1 <= hub->descriptor->bNbrPorts; port1++)
+		set_port_feature(hub->hdev, port1, USB_PORT_FEAT_POWER);
+
+	/* Wait at least 100 msec for power to become stable */
+	delay = max(pgood_delay, (unsigned) 100);
+	if (do_delay)
+		msleep(delay);
+	return delay;
+}
+
+/* Added by Panasonic for fast bootup. */
+static void hub_power_on_init(struct usb_hub *hub)
 {
 	int port1;
 	unsigned pgood_delay = hub->descriptor->bPwrOn2PwrGood * 2;
@@ -536,9 +812,9 @@ static void hub_power_on(struct usb_hub *hub)
 	for (port1 = 1; port1 <= hub->descriptor->bNbrPorts; port1++)
 		set_port_feature(hub->hdev, port1, USB_PORT_FEAT_POWER);
 
-	/* Wait at least 100 msec for power to become stable */
-	msleep(max(pgood_delay, (unsigned) 100));
-}
+	/* Wait bPwrOn2PwrGood * 2 for power to become stable */
+	msleep(pgood_delay);
+} 
 
 static int hub_hub_status(struct usb_hub *hub,
 		u16 *status, u16 *change)
@@ -598,9 +874,44 @@ static void hub_port_logical_disconnect(struct usb_hub *hub, int port1)
  	kick_khubd(hub);
 }
 
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic ---> */
+
+/**
+ * usb_remove_device - disable a device's port on its parent hub
+ * @udev: device to be disabled and removed
+ * Context: @udev locked, must be able to sleep.
+ *
+ * After @udev's port has been disabled, khubd is notified and it will
+ * see that the device has been disconnected.  When the device is
+ * physically unplugged and something is plugged in, the events will
+ * be received and processed normally.
+ */
+int usb_remove_device(struct usb_device *udev)
+{
+	struct usb_hub *hub;
+	struct usb_interface *intf;
+
+	if (!udev->parent)	/* Can't remove a root hub */
+		return -EINVAL;
+	hub = hdev_to_hub(udev->parent);
+	intf = to_usb_interface(hub->intfdev);
+
+	usb_autopm_get_interface(intf);
+	set_bit(udev->portnum, hub->removed_bits);
+	hub_port_logical_disconnect(hub, udev->portnum);
+	usb_autopm_put_interface(intf);
+	return 0;
+}
+
+/* <--- 2010/7/14, back-porting from 2.6.33 by Panasonic */
+
 enum hub_activation_type {
-	HUB_INIT, HUB_POST_RESET, HUB_RESUME, HUB_RESET_RESUME
+	HUB_INIT, HUB_INIT2, HUB_INIT3,
+	HUB_POST_RESET, HUB_RESUME, HUB_RESET_RESUME,
 };
+
+static void hub_init_func2(struct work_struct *ws);
+static void hub_init_func3(struct work_struct *ws);
 
 static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 {
@@ -608,12 +919,45 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 	int port1;
 	int status;
 	bool need_debounce_delay = false;
+	unsigned delay;
+
+	/* Continue a partial initialization */
+	if (type == HUB_INIT2)
+		goto init2;
+	if (type == HUB_INIT3)
+		goto init3;
 
 	/* After a resume, port power should still be on.
 	 * For any other type of activation, turn it on.
 	 */
-	if (type != HUB_RESUME)
-		hub_power_on(hub);
+	if (type != HUB_RESUME) {
+
+		/* Speed up system boot by using a delayed_work for the
+		 * hub's initial power-up delays.  This is pretty awkward
+		 * and the implementation looks like a home-brewed sort of
+		 * setjmp/longjmp, but it saves at least 100 ms for each
+		 * root hub (assuming usbcore is compiled into the kernel
+		 * rather than as a module).  It adds up.
+		 *
+		 * This can't be done for HUB_RESUME or HUB_RESET_RESUME
+		 * because for those activation types the ports have to be
+		 * operational when we return.  In theory this could be done
+		 * for HUB_POST_RESET, but it's easier not to.
+		 */
+		if (type == HUB_INIT) {
+			delay = hub_power_on(hub, false);
+			PREPARE_DELAYED_WORK(&hub->init_work, hub_init_func2);
+			schedule_delayed_work(&hub->init_work,
+					msecs_to_jiffies(delay));
+
+			/* Suppress autosuspend until init is done */
+			to_usb_interface(hub->intfdev)->pm_usage_cnt = 1;
+			return;		/* Continues at init2: below */
+		} else {
+			hub_power_on(hub, true);
+		}
+	}
+ init2:
 
 	/* Check each port and set hub->change_bits to let khubd know
 	 * which ports need attention.
@@ -622,8 +966,28 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 		struct usb_device *udev = hdev->children[port1-1];
 		u16 portstatus, portchange;
 
+#if 0   /* original */
 		portstatus = portchange = 0;
 		status = hub_port_status(hub, port1, &portstatus, &portchange);
+#else  /* 2009/3/18, Modified by Panasonic */
+        {
+            int loop;
+            static const int MAX=2;
+            for(loop=0;loop<MAX;loop++){
+                portstatus = portchange = 0;
+                status = hub_port_status(hub, port1, &portstatus, &portchange);
+                /* 			printk(KERN_INFO */
+                /*                    "**** port %d: status %04x change %04x\n", */
+                /*                    port1, portstatus, portchange); */
+                if( (type!=HUB_INIT)
+                    || !(portchange & USB_PORT_STAT_C_CONNECTION)
+                    || (portstatus & USB_PORT_STAT_CONNECTION) )
+                    break;
+                msleep(hub->descriptor->bPwrOn2PwrGood);
+            }
+        }
+#endif
+ 
 		if (udev || (portstatus & USB_PORT_STAT_CONNECTION))
 			dev_dbg(hub->intfdev,
 					"port %d: status %04x change %04x\n",
@@ -654,6 +1018,15 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 			clear_port_feature(hub->hdev, port1,
 					USB_PORT_FEAT_C_ENABLE);
 		}
+
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic ---> */
+		/* We can forget about a "removed" device when there's a
+		 * physical disconnect or the connect status changes.
+		 */
+		if (!(portstatus & USB_PORT_STAT_CONNECTION) ||
+				(portchange & USB_PORT_STAT_C_CONNECTION))
+			clear_bit(port1, hub->removed_bits);
+/* <--- 2010/7/14, back-porting from 2.6.33 by Panasonic */
 
 		if (!udev || udev->state == USB_STATE_NOTATTACHED) {
 			/* Tell khubd to disconnect the device or
@@ -692,9 +1065,20 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 	 * If any port-status changes do occur during this delay, khubd
 	 * will see them later and handle them normally.
 	 */
-	if (need_debounce_delay)
-		msleep(HUB_DEBOUNCE_STABLE);
+	if (need_debounce_delay) {
+		delay = HUB_DEBOUNCE_STABLE;
 
+		/* Don't do a long sleep inside a workqueue routine */
+		if (type == HUB_INIT2) {
+			PREPARE_DELAYED_WORK(&hub->init_work, hub_init_func3);
+			schedule_delayed_work(&hub->init_work,
+					msecs_to_jiffies(delay));
+			return;		/* Continues at init3: below */
+		} else {
+			msleep(delay);
+		}
+	}
+ init3:
 	hub->quiescing = 0;
 
 	status = usb_submit_urb(hub->urb, GFP_NOIO);
@@ -707,6 +1091,21 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 	kick_khubd(hub);
 }
 
+/* Implement the continuations for the delays above */
+static void hub_init_func2(struct work_struct *ws)
+{
+	struct usb_hub *hub = container_of(ws, struct usb_hub, init_work.work);
+
+	hub_activate(hub, HUB_INIT2);
+}
+
+static void hub_init_func3(struct work_struct *ws)
+{
+	struct usb_hub *hub = container_of(ws, struct usb_hub, init_work.work);
+
+	hub_activate(hub, HUB_INIT3);
+}
+
 enum hub_quiescing_type {
 	HUB_DISCONNECT, HUB_PRE_RESET, HUB_SUSPEND
 };
@@ -715,6 +1114,8 @@ static void hub_quiesce(struct usb_hub *hub, enum hub_quiescing_type type)
 {
 	struct usb_device *hdev = hub->hdev;
 	int i;
+
+	cancel_delayed_work_sync(&hub->init_work);
 
 	/* khubd and related activity won't re-trigger */
 	hub->quiescing = 1;
@@ -732,7 +1133,7 @@ static void hub_quiesce(struct usb_hub *hub, enum hub_quiescing_type type)
 	if (hub->has_indicators)
 		cancel_delayed_work_sync(&hub->leds);
 	if (hub->tt.hub)
-		cancel_work_sync(&hub->tt.kevent);
+		cancel_work_sync(&hub->tt.clear_work);
 }
 
 /* caller has locked the hub device */
@@ -756,6 +1157,7 @@ static int hub_post_reset(struct usb_interface *intf)
 static int hub_configure(struct usb_hub *hub,
 	struct usb_endpoint_descriptor *endpoint)
 {
+    struct usb_hcd *hcd; /* 2010/7/12, back-porting from 2.6.33 by Panasonic */
 	struct usb_device *hdev = hub->hdev;
 	struct device *hub_dev = hub->intfdev;
 	u16 hubstatus, hubchange;
@@ -780,6 +1182,17 @@ static int hub_configure(struct usb_hub *hub,
 	}
 	mutex_init(&hub->status_mutex);
 
+/* 2010/9/2, added by Panasonic to support USB3.0 external HUB ---> */
+    /*
+     * Setting hub depth for SS hub module in USB3.0 HUB  
+     */
+    ret = set_hub_depth(hdev);
+    if(ret < 0) {
+		message = "can't set hub depth";
+		goto fail;
+    }
+/* <--- 2010/9/2, added by Panasonic to support USB3.0 external HUB */
+
 	hub->descriptor = kmalloc(sizeof(*hub->descriptor), GFP_KERNEL);
 	if (!hub->descriptor) {
 		message = "can't kmalloc hub descriptor";
@@ -791,8 +1204,8 @@ static int hub_configure(struct usb_hub *hub,
 	 * hub->descriptor can handle USB_MAXCHILDREN ports,
 	 * but the hub can/will return fewer bytes here.
 	 */
-	ret = get_hub_descriptor(hdev, hub->descriptor,
-			sizeof(*hub->descriptor));
+    ret = get_hub_descriptor(hdev, hub->descriptor,
+                             sizeof(*hub->descriptor));
 	if (ret < 0) {
 		message = "can't read hub descriptor";
 		goto fail;
@@ -849,7 +1262,7 @@ static int hub_configure(struct usb_hub *hub,
 
 	spin_lock_init (&hub->tt.lock);
 	INIT_LIST_HEAD (&hub->tt.clear_list);
-	INIT_WORK (&hub->tt.kevent, hub_tt_kevent);
+	INIT_WORK(&hub->tt.clear_work, hub_tt_work);
 	switch (hdev->descriptor.bDeviceProtocol) {
 		case 0:
 			break;
@@ -866,6 +1279,9 @@ static int hub_configure(struct usb_hub *hub,
 				dev_err(hub_dev, "Using single TT (err %d)\n",
 					ret);
 			hub->tt.hub = hdev;
+			break;
+		case 3:
+			/* USB 3.0 hubs don't have a TT */
 			break;
 		default:
 			dev_dbg(hub_dev, "Unrecognized hub protocol %d\n",
@@ -911,6 +1327,22 @@ static int hub_configure(struct usb_hub *hub,
 
 	dev_dbg(hub_dev, "power on to power good time: %dms\n",
 		hub->descriptor->bPwrOn2PwrGood * 2);
+
+/* 2010/7/12, back-porting from 2.6.33 by Panasonic ---> */
+
+	/* Update the HCD's internal representation of this hub before khubd
+	 * starts getting port status changes for devices under the hub.
+	 */
+	hcd = bus_to_hcd(hdev->bus);
+	if (hcd->driver->update_hub_device) {
+		ret = hcd->driver->update_hub_device(hcd, hdev,
+				&hub->tt, GFP_KERNEL);
+		if (ret < 0) {
+			message = "can't update HCD hub info";
+			goto fail;
+		}
+	}
+/* <--- 2010/7/12, back-porting from 2.6.33 by Panasonic */
 
 	/* power budgeting mostly matters with bus-powered hubs,
 	 * and battery-powered root hubs (may provide just 8 mA).
@@ -995,6 +1427,7 @@ static int hub_configure(struct usb_hub *hub,
 	if (hub->has_indicators && blinkenlights)
 		hub->indicator [0] = INDICATOR_CYCLE;
 
+	hub_power_on_init(hub);
 	hub_activate(hub, HUB_INIT);
 	return 0;
 
@@ -1054,8 +1487,8 @@ static int hub_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	hdev = interface_to_usbdev(intf);
 
 	if (hdev->level == MAX_TOPO_LEVEL) {
-		dev_err(&intf->dev, "Unsupported bus topology: "
-				"hub nested too deep\n");
+		dev_err(&intf->dev,
+			"Unsupported bus topology: hub nested too deep\n");
 		return -E2BIG;
 	}
 
@@ -1099,6 +1532,7 @@ descriptor_error:
 	hub->intfdev = &intf->dev;
 	hub->hdev = hdev;
 	INIT_DELAYED_WORK(&hub->leds, led_work);
+	INIT_DELAYED_WORK(&hub->init_work, NULL);
 	usb_get_intf(intf);
 
 	usb_set_intfdata (intf, hub);
@@ -1141,7 +1575,96 @@ hub_ioctl(struct usb_interface *intf, unsigned int code, void *user_data)
 		spin_unlock_irq(&device_state_lock);
 
 		return info->nports + 1;
+    }
+
+/* 2010/6/15, added by Panasonic ==> */
+/* #ifdef CONFIG_P2PF_SCSI_DISK_USB_PORT_TEST */
+
+	case USBDEVFS_HUB_PORTTEST: {
+		struct usbdevfs_hub_porttest *param = (struct usbdevfs_hub_porttest *)user_data;
+		int status;
+ 
+		if ((status = set_port_feature(hdev, param->port,
+					       USB_PORT_FEAT_SUSPEND)) < 0) {
+			dev_warn(hdev_to_hub(hdev)->intfdev,
+                     "WARN: set_port_feature(USB_PORT_FEAT_SUSPEND) for port=%d failed(%d)\n",
+                     param->port, status);
+/* 			return status; */  /* --> 2011/6/3, Commented by Panasonic (PAV) */ 
 		}
+		if ((status = set_port_feature(hdev, (param->mode<<8)|param->port, USB_PORT_FEAT_TEST)) < 0) {
+            dev_err(hdev_to_hub(hdev)->intfdev,
+                    "ERROR: set_port_feature(USB_PORT_FEAT_TEST, test_mode=%d) for port=%d failed(%d)\n",
+                    param->mode, param->port, status);
+			return -EIO;
+		}
+		return 0;
+	}
+
+/* #endif  /\* CONFIG_P2PF_SCSI_DISK_USB_PORT_TEST *\/ */
+/* <== 2010/6/15, added by Panasonic */
+
+
+/* 2010/6/29, added by Panasonic ==> */
+/* #ifdef CONFIG_P2PF_SCSI_DISK_USB_PORT_TEST */
+    case USBDEVFS_HUB_PORTSTATUS : {
+		struct usbdevfs_hub_portstatus *param = (struct usbdevfs_hub_portstatus *)user_data;
+        int retval;
+
+        if(param->port==0){
+            retval= hub_hub_status(hdev_to_hub(hdev), &param->status, &param->change);
+            if(retval<0){
+                printk("ioctl(USBDEVFS_HUB_PORTSTATUS): hub_hub_status() is failed(%d)\n", retval);
+                return retval;
+            }
+        } else {
+            retval= hub_port_status(hdev_to_hub(hdev), param->port, &param->status, &param->change);
+            if(retval<0){
+                printk("ioctl(USBDEVFS_HUB_PORTSTATUS): hub_port_status() for port=%d is failed(%d)\n",
+                       param->port, retval);
+                return retval;
+            }
+        }
+ 
+        return 0;
+    }
+/* #endif  /\* CONFIG_P2PF_SCSI_DISK_USB_PORT_TEST *\/ */
+/* <== 2010/6/29, added by Panasonic */
+
+/* 2011/3/30, added by Panasonic (SAV) ---> */
+    case USBDEVFS_HUB_PORT_RESET: {
+        unsigned int port = *(unsigned int*)user_data;
+        int status = set_port_feature(hdev, port, USB_PORT_FEAT_RESET);
+        if (status) {
+            dev_err(hdev_to_hub(hdev)->intfdev,
+                    "ioctl(USBDEVFS_HUB_PORTRESET): cannot reset port %d (err = %d)\n",
+                    port, status);
+        }
+        return 0;
+    }
+
+    case USBDEVFS_HUB_PORT_DISABLE: {
+        unsigned int port = *(unsigned int*)user_data;
+        int status = hub_port_disable(hdev_to_hub(hdev), port, 1);
+        if (status) {
+            dev_err(hdev_to_hub(hdev)->intfdev,
+                    "ioctl(USBDEVFS_HUB_PORTRESET): hub_port_disable() for %d (err = %d)\n",
+                    port, status);
+        }
+        return 0;
+    }
+
+    case USBDEVFS_HUB_PORT_DISCONNECT: {
+        unsigned int port = *(unsigned int*)user_data;
+        if (port<1 || port> hdev->maxchild) {
+            dev_err(hdev_to_hub(hdev)->intfdev,
+                    "ioctl(USBDEVFS_HUB_PORTRESET): invalid port number =%d\n", port);
+            return -EINVAL;
+        }
+        if (hdev->children[port-1])
+            usb_disconnect(&hdev->children[port-1]);
+        return 0;
+    }
+/* <--- 2011/3/30, added by Panasonic (SAV) */
 
 	default:
 		return -ENOSYS;
@@ -1220,6 +1743,7 @@ void usb_set_device_state(struct usb_device *udev,
 		recursively_mark_NOTATTACHED(udev);
 	spin_unlock_irqrestore(&device_state_lock, flags);
 }
+EXPORT_SYMBOL_GPL(usb_set_device_state);
 
 /*
  * WUSB devices are simple: they have no hubs behind, so the mapping
@@ -1237,6 +1761,11 @@ void usb_set_device_state(struct usb_device *udev,
  * 0 is reserved by USB for default address; (b) Linux's USB stack
  * uses always #1 for the root hub of the controller. So USB stack's
  * port #1, which is wusb virtual-port #0 has address #2.
+ *
+ * Devices connected under xHCI are not as simple.  The host controller
+ * supports virtualization, so the hardware assigns device addresses and
+ * the HCD must setup data structures before issuing a set address
+ * command to the hardware.
  */
 static void choose_address(struct usb_device *udev)
 {
@@ -1291,8 +1820,9 @@ static void usb_stop_pm(struct usb_device *udev)
 		usb_autosuspend_device(udev->parent);
 	usb_pm_unlock(udev);
 
-	/* Stop any autosuspend requests already submitted */
-	cancel_rearming_delayed_work(&udev->autosuspend);
+	/* Stop any autosuspend or autoresume requests already submitted */
+	cancel_delayed_work_sync(&udev->autosuspend);
+	cancel_work_sync(&udev->autoresume);
 }
 
 #else
@@ -1351,17 +1881,12 @@ void usb_disconnect(struct usb_device **pdev)
 	usb_disable_device(udev, 0);
 	usb_hcd_synchronize_unlinks(udev);
 
+	usb_remove_ep_devs(&udev->ep0);
 	usb_unlock_device(udev);
 
-	/* Remove the device-specific files from sysfs.  This must be
-	 * done with udev unlocked, because some of the attribute
-	 * routines try to acquire the device lock.
-	 */
-	usb_remove_sysfs_dev_files(udev);
-
 	/* Unregister the device.  The device driver is responsible
-	 * for removing the device files from usbfs and sysfs and for
-	 * de-configuring the device.
+	 * for de-configuring the device and invoking the remove-device
+	 * notifier chain (used by usbfs and possibly others).
 	 */
 	device_del(&udev->dev);
 
@@ -1393,8 +1918,8 @@ static void announce_device(struct usb_device *udev)
 	dev_info(&udev->dev, "New USB device found, idVendor=%04x, idProduct=%04x\n",
 		le16_to_cpu(udev->descriptor.idVendor),
 		le16_to_cpu(udev->descriptor.idProduct));
-	dev_info(&udev->dev, "New USB device strings: Mfr=%d, Product=%d, "
-		"SerialNumber=%d\n",
+	dev_info(&udev->dev,
+		"New USB device strings: Mfr=%d, Product=%d, SerialNumber=%d\n",
 		udev->descriptor.iManufacturer,
 		udev->descriptor.iProduct,
 		udev->descriptor.iSerialNumber);
@@ -1459,7 +1984,7 @@ static int usb_configure_device_otg(struct usb_device *udev)
 					 * customize to match your product.
 					 */
 					dev_info(&udev->dev,
-						"can't set HNP mode; %d\n",
+						"can't set HNP mode: %d\n",
 						err);
 					bus->b_hnp_enable = 0;
 				}
@@ -1473,7 +1998,7 @@ static int usb_configure_device_otg(struct usb_device *udev)
 		 * (Includes HNP test device.)
 		 */
 		if (udev->bus->b_hnp_enable || udev->bus->is_b_host) {
-			err = usb_port_suspend(udev);
+			err = usb_port_suspend(udev, PMSG_SUSPEND);
 			if (err < 0)
 				dev_dbg(&udev->dev, "HNP fail, %d\n", err);
 		}
@@ -1552,21 +2077,27 @@ int usb_new_device(struct usb_device *udev)
 {
 	int err;
 
-	usb_detect_quirks(udev);		/* Determine quirks */
-	err = usb_configure_device(udev);	/* detect & probe dev/intfs */
-	if (err < 0)
-		goto fail;
-	/* export the usbdev device-node for libusb */
-	udev->dev.devt = MKDEV(USB_DEVICE_MAJOR,
-			(((udev->bus->busnum-1) * 128) + (udev->devnum-1)));
-
 	/* Increment the parent's count of unsuspended children */
 	if (udev->parent)
 		usb_autoresume_device(udev->parent);
 
+	usb_detect_quirks(udev);		/* Determine quirks */
+	err = usb_configure_device(udev);	/* detect & probe dev/intfs */
+	if (err < 0)
+		goto fail;
+	dev_dbg(&udev->dev, "udev %d, busnum %d, minor = %d\n",
+			udev->devnum, udev->bus->busnum,
+			(((udev->bus->busnum-1) * 128) + (udev->devnum-1)));
+	/* export the usbdev device-node for libusb */
+	udev->dev.devt = MKDEV(USB_DEVICE_MAJOR,
+			(((udev->bus->busnum-1) * 128) + (udev->devnum-1)));
+
+	/* Tell the world! */
+	announce_device(udev);
+
 	/* Register the device.  The device driver is responsible
-	 * for adding the device files to sysfs and for configuring
-	 * the device.
+	 * for configuring the device and invoking the add-device
+	 * notifier chain (used by usbfs and possibly others).
 	 */
 	err = device_add(&udev->dev);
 	if (err) {
@@ -1574,15 +2105,12 @@ int usb_new_device(struct usb_device *udev)
 		goto fail;
 	}
 
-	/* put device-specific files into sysfs */
-	usb_create_sysfs_dev_files(udev);
-
-	/* Tell the world! */
-	announce_device(udev);
+	(void) usb_create_ep_devs(&udev->dev, &udev->ep0, udev);
 	return err;
 
 fail:
 	usb_set_device_state(udev, USB_STATE_NOTATTACHED);
+	usb_stop_pm(udev);
 	return err;
 }
 
@@ -1899,7 +2427,7 @@ static int check_port_resume_type(struct usb_device *udev,
  *
  * Returns 0 on success, else negative errno.
  */
-int usb_port_suspend(struct usb_device *udev)
+int usb_port_suspend(struct usb_device *udev, pm_message_t msg)
 {
 	struct usb_hub	*hub = hdev_to_hub(udev->parent);
 	int		port1 = udev->portnum;
@@ -1938,7 +2466,7 @@ int usb_port_suspend(struct usb_device *udev)
 	} else {
 		/* device has up to 10 msec to fully suspend */
 		dev_dbg(&udev->dev, "usb %ssuspend\n",
-				udev->auto_pm ? "auto-" : "");
+				(msg.event & PM_EVENT_AUTO ? "auto-" : ""));
 		usb_set_device_state(udev, USB_STATE_SUSPENDED);
 		msleep(10);
 	}
@@ -1962,8 +2490,8 @@ static int finish_port_resume(struct usb_device *udev)
 	u16	devstatus;
 
 	/* caller owns the udev device lock */
-	dev_dbg(&udev->dev, "finish %sresume\n",
-			udev->reset_resume ? "reset-" : "");
+	dev_dbg(&udev->dev, "%s\n",
+		udev->reset_resume ? "finish reset-resume" : "finish resume");
 
 	/* usb ch9 identifies four variants of SUSPENDED, based on what
 	 * state the device resumes to.  Linux currently won't see the
@@ -2015,8 +2543,9 @@ static int finish_port_resume(struct usb_device *udev)
 					NULL, 0,
 					USB_CTRL_SET_TIMEOUT);
 			if (status)
-				dev_dbg(&udev->dev, "disable remote "
-					"wakeup, status %d\n", status);
+				dev_dbg(&udev->dev,
+					"disable remote wakeup, status %d\n",
+					status);
 		}
 		status = 0;
 	}
@@ -2057,7 +2586,7 @@ static int finish_port_resume(struct usb_device *udev)
  *
  * Returns 0 on success, else negative errno.
  */
-int usb_port_resume(struct usb_device *udev)
+int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 {
 	struct usb_hub	*hub = hdev_to_hub(udev->parent);
 	int		port1 = udev->portnum;
@@ -2082,7 +2611,7 @@ int usb_port_resume(struct usb_device *udev)
 	} else {
 		/* drive resume for at least 20 msec */
 		dev_dbg(&udev->dev, "usb %sresume\n",
-				udev->auto_pm ? "auto-" : "");
+				(msg.event & PM_EVENT_AUTO ? "auto-" : ""));
 		msleep(25);
 
 		/* Virtual root hubs can trigger on GET_PORT_STATUS to
@@ -2123,7 +2652,7 @@ static int remote_wakeup(struct usb_device *udev)
 	if (udev->state == USB_STATE_SUSPENDED) {
 		dev_dbg(&udev->dev, "usb %sresume\n", "wakeup-");
 		usb_mark_last_busy(udev);
-		status = usb_external_resume_device(udev);
+		status = usb_external_resume_device(udev, PMSG_REMOTE_RESUME);
 	}
 	return status;
 }
@@ -2132,14 +2661,14 @@ static int remote_wakeup(struct usb_device *udev)
 
 /* When CONFIG_USB_SUSPEND isn't set, we never suspend or resume any ports. */
 
-int usb_port_suspend(struct usb_device *udev)
+int usb_port_suspend(struct usb_device *udev, pm_message_t msg)
 {
 	return 0;
 }
 
 /* However we may need to do a reset-resume */
 
-int usb_port_resume(struct usb_device *udev)
+int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 {
 	struct usb_hub	*hub = hdev_to_hub(udev->parent);
 	int		port1 = udev->portnum;
@@ -2179,7 +2708,7 @@ static int hub_suspend(struct usb_interface *intf, pm_message_t msg)
 
 		udev = hdev->children [port1-1];
 		if (udev && udev->can_submit) {
-			if (!hdev->auto_pm)
+			if (!(msg.event & PM_EVENT_AUTO))
 				dev_dbg(&intf->dev, "port %d nyet suspended\n",
 						port1);
 			return -EBUSY;
@@ -2269,9 +2798,21 @@ static int hub_port_debounce(struct usb_hub *hub, int port1)
 		if (ret < 0)
 			return ret;
 
+/*         dev_info (hub->intfdev, */
+/*                   "port %d, status %04x, change %04x, %s\n", */
+/*                   port1, portstatus, portchange, portspeed (portstatus)); */
+
 		if (!(portchange & USB_PORT_STAT_C_CONNECTION) &&
 		     (portstatus & USB_PORT_STAT_CONNECTION) == connection) {
 			stable_time += HUB_DEBOUNCE_STEP;
+
+            /* Added by Panasonic, 2009/4/17 >>>>> */
+            /* if port speed is unknown then abort debouncing (root hub only) */
+            if( (hub->hdev->parent == NULL)  /* root hub */
+                && (portstatus & USB_PORT_STAT_UNKNOWN_SPEED) )
+                break;
+            /* <<<< Added by Panasonic, 2009/4/17 */
+
 			if (stable_time >= HUB_DEBOUNCE_STABLE)
 				break;
 		} else {
@@ -2300,9 +2841,9 @@ static int hub_port_debounce(struct usb_hub *hub, int port1)
 
 void usb_ep0_reinit(struct usb_device *udev)
 {
-	usb_disable_endpoint(udev, 0 + USB_DIR_IN);
-	usb_disable_endpoint(udev, 0 + USB_DIR_OUT);
-	usb_enable_endpoint(udev, &udev->ep0);
+	usb_disable_endpoint(udev, 0 + USB_DIR_IN, true);
+	usb_disable_endpoint(udev, 0 + USB_DIR_OUT, true);
+	usb_enable_endpoint(udev, &udev->ep0, true);
 }
 EXPORT_SYMBOL_GPL(usb_ep0_reinit);
 
@@ -2312,19 +2853,29 @@ EXPORT_SYMBOL_GPL(usb_ep0_reinit);
 static int hub_set_address(struct usb_device *udev, int devnum)
 {
 	int retval;
+	struct usb_hcd *hcd = bus_to_hcd(udev->bus);
 
-	if (devnum <= 1)
+	/*
+	 * The host controller will choose the device address,
+	 * instead of the core having chosen it earlier
+	 */
+	if (!hcd->driver->address_device && devnum <= 1)
 		return -EINVAL;
 	if (udev->state == USB_STATE_ADDRESS)
 		return 0;
 	if (udev->state != USB_STATE_DEFAULT)
 		return -EINVAL;
-	retval = usb_control_msg(udev, usb_sndaddr0pipe(),
-		USB_REQ_SET_ADDRESS, 0, devnum, 0,
-		NULL, 0, USB_CTRL_SET_TIMEOUT);
+	if (hcd->driver->address_device) {
+		retval = hcd->driver->address_device(hcd, udev);
+	} else {
+		retval = usb_control_msg(udev, usb_sndaddr0pipe(),
+				USB_REQ_SET_ADDRESS, 0, devnum, 0,
+				NULL, 0, USB_CTRL_SET_TIMEOUT);
+		if (retval == 0)
+			update_address(udev, devnum);
+	}
 	if (retval == 0) {
 		/* Device now using proper address. */
-		update_address(udev, devnum);
 		usb_set_device_state(udev, USB_STATE_ADDRESS);
 		usb_ep0_reinit(udev);
 	}
@@ -2347,6 +2898,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 	static DEFINE_MUTEX(usb_address0_mutex);
 
 	struct usb_device	*hdev = hub->hdev;
+	struct usb_hcd		*hcd = bus_to_hcd(hdev->bus);
 	int			i, j, retval;
 	unsigned		delay = HUB_SHORT_RESET_TIME;
 	enum usb_device_speed	oldspeed = udev->speed;
@@ -2369,11 +2921,30 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 
 	mutex_lock(&usb_address0_mutex);
 
-	/* Reset the device; full speed may morph to high speed */
-	retval = hub_port_reset(hub, port1, udev, delay);
-	if (retval < 0)		/* error or disconnect */
-		goto fail;
-				/* success, speed is known */
+    /* Commented by panasonic (SAV), 2011/2/3 ---> */
+
+/* 	if ((hcd->driver->flags & HCD_USB3) && udev->config) { */
+/* 		/\* FIXME this will need special handling by the xHCI driver. *\/ */
+/* 		dev_dbg(&udev->dev, */
+/* 				"xHCI reset of configured device " */
+/* 				"not supported yet.\n"); */
+/* 		retval = -EINVAL; */
+/* 		goto fail; */
+/* 	} else */
+
+    /* <--- Commented by panasonic (SAV), 2011/2/3 */
+
+    if (!udev->config && oldspeed == USB_SPEED_SUPER) {
+		/* Don't reset USB 3.0 devices during an initial setup */
+		usb_set_device_state(udev, USB_STATE_DEFAULT);
+	} else {
+		/* Reset the device; full speed may morph to high speed */
+		/* FIXME a USB 2.0 device may morph into SuperSpeed on reset. */
+		retval = hub_port_reset(hub, port1, udev, delay);
+		if (retval < 0)		/* error or disconnect */
+			goto fail;
+		/* success, speed is known */
+	}
 	retval = -ENODEV;
 
 	if (oldspeed != USB_SPEED_UNKNOWN && oldspeed != udev->speed) {
@@ -2388,21 +2959,22 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 	 * reported as 0xff in the device descriptor). WUSB1.0[4.8.1].
 	 */
 	switch (udev->speed) {
+	case USB_SPEED_SUPER:
 	case USB_SPEED_VARIABLE:	/* fixed at 512 */
-		udev->ep0.desc.wMaxPacketSize = __constant_cpu_to_le16(512);
+		udev->ep0.desc.wMaxPacketSize = cpu_to_le16(512);
 		break;
 	case USB_SPEED_HIGH:		/* fixed at 64 */
-		udev->ep0.desc.wMaxPacketSize = __constant_cpu_to_le16(64);
+		udev->ep0.desc.wMaxPacketSize = cpu_to_le16(64);
 		break;
 	case USB_SPEED_FULL:		/* 8, 16, 32, or 64 */
 		/* to determine the ep0 maxpacket size, try to read
 		 * the device descriptor to get bMaxPacketSize0 and
 		 * then correct our initial guess.
 		 */
-		udev->ep0.desc.wMaxPacketSize = __constant_cpu_to_le16(64);
+		udev->ep0.desc.wMaxPacketSize = cpu_to_le16(64);
 		break;
 	case USB_SPEED_LOW:		/* fixed at 8 */
-		udev->ep0.desc.wMaxPacketSize = __constant_cpu_to_le16(8);
+		udev->ep0.desc.wMaxPacketSize = cpu_to_le16(8);
 		break;
 	default:
 		goto fail;
@@ -2413,16 +2985,23 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 	case USB_SPEED_LOW:	speed = "low";	break;
 	case USB_SPEED_FULL:	speed = "full";	break;
 	case USB_SPEED_HIGH:	speed = "high";	break;
+	case USB_SPEED_SUPER:
+				speed = "super";
+				break;
 	case USB_SPEED_VARIABLE:
 				speed = "variable";
 				type = "Wireless ";
 				break;
 	default: 		speed = "?";	break;
 	}
-	dev_info (&udev->dev,
-		  "%s %s speed %sUSB device using %s and address %d\n",
-		  (udev->config) ? "reset" : "new", speed, type,
-		  udev->bus->controller->driver->name, devnum);
+    /* 2010/9/2, modified by Panasonic to fix invalid USB address
+       value of non-SS device for xHCI */
+/* 	if (udev->speed != USB_SPEED_SUPER) */
+	if (!(hcd->driver->flags & HCD_USB3) )
+		dev_info(&udev->dev,
+				"%s %s speed %sUSB device using %s and address %d\n",
+				(udev->config) ? "reset" : "new", speed, type,
+				udev->bus->controller->driver->name, devnum);
 
 	/* Set up TT records, if needed  */
 	if (hdev->tt) {
@@ -2447,7 +3026,11 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 	 * value.
 	 */
 	for (i = 0; i < GET_DESCRIPTOR_TRIES; (++i, msleep(100))) {
-		if (USE_NEW_SCHEME(retry_counter)) {
+		/*
+		 * An xHCI controller cannot send any packets to a device until
+		 * a set address command successfully completes.
+		 */
+		if (USE_NEW_SCHEME(retry_counter) && !(hcd->driver->flags & HCD_USB3)) {
 			struct usb_device_descriptor *buf;
 			int r = 0;
 
@@ -2468,7 +3051,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 					USB_REQ_GET_DESCRIPTOR, USB_DIR_IN,
 					USB_DT_DEVICE << 8, 0,
 					buf, GET_DESCRIPTOR_BUFSIZE,
-					USB_CTRL_GET_TIMEOUT);
+					initial_descriptor_timeout);
 				switch (buf->bMaxPacketSize0) {
 				case 8: case 16: case 32: case 64: case 255:
 					if (buf->bDescriptorType ==
@@ -2499,9 +3082,9 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 				goto fail;
 			}
 			if (r) {
-				dev_err(&udev->dev, "device descriptor "
-						"read/%s, error %d\n",
-						"64", r);
+				dev_err(&udev->dev,
+					"device descriptor read/64, error %d\n",
+					r);
 				retval = -EMSGSIZE;
 				continue;
 			}
@@ -2513,7 +3096,7 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
  		 * unauthorized address in the Connect Ack sequence;
  		 * authorization will assign the final address.
  		 */
- 		if (udev->wusb == 0) {
+		if (udev->wusb == 0) {
 			for (j = 0; j < SET_ADDRESS_TRIES; ++j) {
 				retval = hub_set_address(udev, devnum);
 				if (retval >= 0)
@@ -2526,21 +3109,43 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 					devnum, retval);
 				goto fail;
 			}
+            /* 2010/9/2, modified by Panasonic to fix invalid USB address
+               value of non-SS device for xHCI */
+/* 			if (udev->speed == USB_SPEED_SUPER) { */
+            switch (udev->speed) {
+            case USB_SPEED_LOW:	speed = "low";	break;
+            case USB_SPEED_FULL:	speed = "full";	break;
+            case USB_SPEED_HIGH:	speed = "high";	break;
+            case USB_SPEED_SUPER:
+				speed = "super";
+				break;
+            case USB_SPEED_VARIABLE:
+				speed = "variable";
+				break;
+            default: 		speed = "?";	break;
+            }
+			if (hcd->driver->flags & HCD_USB3) {
+				devnum = udev->devnum;
+				dev_info(&udev->dev,
+						"%s %s speed USB device using %s and address %d\n",
+                         (udev->config) ? "reset" : "new", speed,
+						udev->bus->controller->driver->name, devnum);
+			}
 
 			/* cope with hardware quirkiness:
 			 *  - let SET_ADDRESS settle, some device hardware wants it
 			 *  - read ep0 maxpacket even for high and low speed,
 			 */
 			msleep(10);
-			if (USE_NEW_SCHEME(retry_counter))
+			if (USE_NEW_SCHEME(retry_counter) && !(hcd->driver->flags & HCD_USB3))
 				break;
   		}
 
 		retval = usb_get_device_descriptor(udev, 8);
 		if (retval < 8) {
-			dev_err(&udev->dev, "device descriptor "
-					"read/%s, error %d\n",
-					"8", retval);
+			dev_err(&udev->dev,
+					"device descriptor read/8, error %d\n",
+					retval);
 			if (retval >= 0)
 				retval = -EMSGSIZE;
 		} else {
@@ -2551,24 +3156,39 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
 	if (retval)
 		goto fail;
 
-	i = udev->descriptor.bMaxPacketSize0 == 0xff?	/* wusb device? */
-	    512 : udev->descriptor.bMaxPacketSize0;
+	if (udev->descriptor.bMaxPacketSize0 == 0xff ||
+			udev->speed == USB_SPEED_SUPER)
+		i = 512;
+	else
+		i = udev->descriptor.bMaxPacketSize0;
 	if (le16_to_cpu(udev->ep0.desc.wMaxPacketSize) != i) {
-		if (udev->speed != USB_SPEED_FULL ||
-				!(i == 8 || i == 16 || i == 32 || i == 64)) {
-			dev_err(&udev->dev, "ep0 maxpacket = %d\n", i);
-			retval = -EMSGSIZE;
-			goto fail;
-		}
-		dev_dbg(&udev->dev, "ep0 maxpacket = %d\n", i);
+/* 2011/2/15, modified from kernel 2.6.36.1 --->  */
+/* 		if (udev->speed != USB_SPEED_FULL || */
+/* 				!(i == 8 || i == 16 || i == 32 || i == 64)) { */
+/* 			dev_err(&udev->dev, "ep0 maxpacket = %d\n", i); */
+/* 			retval = -EMSGSIZE; */
+/* 			goto fail; */
+/* 		} */
+/* 		dev_dbg(&udev->dev, "ep0 maxpacket = %d\n", i); */
+ 		if (udev->speed == USB_SPEED_LOW ||
+            !(i == 8 || i == 16 || i == 32 || i == 64)) {
+ 			dev_err(&udev->dev, "Invalid ep0 maxpacket: %d\n", i);
+ 			retval = -EMSGSIZE;
+ 			goto fail;
+ 		}
+ 		if (udev->speed == USB_SPEED_FULL)
+ 			dev_dbg(&udev->dev, "ep0 maxpacket = %d\n", i);
+ 		else
+ 			dev_warn(&udev->dev, "Using ep0 maxpacket: %d\n", i);
+/* <--- 2011/2/15, modified from kernel 2.6.36.1 */
 		udev->ep0.desc.wMaxPacketSize = cpu_to_le16(i);
 		usb_ep0_reinit(udev);
 	}
   
 	retval = usb_get_device_descriptor(udev, USB_DT_DEVICE_SIZE);
 	if (retval < (signed)sizeof(udev->descriptor)) {
-		dev_err(&udev->dev, "device descriptor read/%s, error %d\n",
-			"all", retval);
+		dev_err(&udev->dev, "device descriptor read/all, error %d\n",
+			retval);
 		if (retval >= 0)
 			retval = -ENOMSG;
 		goto fail;
@@ -2636,9 +3256,9 @@ hub_power_remaining (struct usb_hub *hub)
 		else
 			delta = 8;
 		if (delta > hub->mA_per_port)
-			dev_warn(&udev->dev, "%dmA is over %umA budget "
-					"for port %d!\n",
-					delta, hub->mA_per_port, port1);
+			dev_warn(&udev->dev,
+				 "%dmA is over %umA budget for port %d!\n",
+				 delta, hub->mA_per_port, port1);
 		remaining -= delta;
 	}
 	if (remaining < 0) {
@@ -2724,6 +3344,15 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
 		usb_disconnect(&hdev->children[port1-1]);
 	clear_bit(port1, hub->change_bits);
 
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic ---> */
+	/* We can forget about a "removed" device when there's a physical
+	 * disconnect or the connect status changes.
+	 */
+	if (!(portstatus & USB_PORT_STAT_CONNECTION) ||
+			(portchange & USB_PORT_STAT_C_CONNECTION))
+		clear_bit(port1, hub->removed_bits);
+/* <--- 2010/7/14, back-porting from 2.6.33 by Panasonic */
+
 	if (portchange & (USB_PORT_STAT_C_CONNECTION |
 				USB_PORT_STAT_C_ENABLE)) {
 		status = hub_port_debounce(hub, port1);
@@ -2737,9 +3366,16 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
 		}
 	}
 
+#if 0
 	/* Return now if debouncing failed or nothing is connected */
 	if (!(portstatus & USB_PORT_STAT_CONNECTION)) {
-
+#else  /* 2010/7/14, back-porting from 2.6.33 by Panasonic */
+	/* Return now if debouncing failed or nothing is connected or
+	 * the device was "removed".
+	 */
+	if (!(portstatus & USB_PORT_STAT_CONNECTION) ||
+			test_bit(port1, hub->removed_bits)) {
+#endif
 		/* maybe switch power back on (e.g. root hub was reset) */
 		if ((wHubCharacteristics & HUB_CHAR_LPSM) < 2
 				&& !(portstatus & (1 << USB_PORT_FEAT_POWER)))
@@ -2749,6 +3385,19 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
   			goto done;
 		return;
 	}
+
+    /* Added by Panasonic, 2009/4/17 >>>>> */
+	/* Return now if port speed is unknown (root hub only) */
+	if ( (hub->hdev->parent == NULL)  /* root hub */
+         && (portstatus & USB_PORT_STAT_UNKNOWN_SPEED) ) {
+        dev_err (hub_dev,
+                 "unknown speed device, port %d, status %04x, change %04x, %s\n",
+                 port1, portstatus, portchange, portspeed (portstatus));
+		if (portstatus & USB_PORT_STAT_ENABLE)
+  			goto done;
+		return;
+	}
+    /* <<<< Added by Panasonic, 2009/4/17 */
 
 	for (i = 0; i < SET_CONFIG_TRIES; i++) {
 
@@ -2764,19 +3413,48 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
 		}
 
 		usb_set_device_state(udev, USB_STATE_POWERED);
-		udev->speed = USB_SPEED_UNKNOWN;
  		udev->bus_mA = hub->mA_per_port;
 		udev->level = hdev->level + 1;
 		udev->wusb = hub_is_wusb(hub);
 
-		/* set the address */
-		choose_address(udev);
-		if (udev->devnum <= 0) {
-			status = -ENOTCONN;	/* Don't retry */
-			goto loop;
+		/*
+		 * USB 3.0 devices are reset automatically before the connect
+		 * port status change appears, and the root hub port status
+		 * shows the correct speed.  We also get port change
+		 * notifications for USB 3.0 devices from the USB 3.0 portion of
+		 * an external USB 3.0 hub, but this isn't handled correctly yet
+		 * FIXME.
+		 */
+
+		if (!(hcd->driver->flags & HCD_USB3))
+			udev->speed = USB_SPEED_UNKNOWN;
+/* 2010/9/2, modified by Panasonic to support USB3.0 external HUB ---> */
+        else if ( /* (hdev->parent == NULL) && */
+                  (portstatus & (1 << USB_PORT_FEAT_SUPERSPEED)) )
+            udev->speed = USB_SPEED_SUPER;
+/* <--- 2010/9/2, modified by Panasonic to support USB3.0 external HUB */
+        else {
+			udev->speed = USB_SPEED_UNKNOWN;
+/* 2010/9/2, modified by Panasonic ---> */
+            set_current_state(TASK_UNINTERRUPTIBLE);
+            schedule_timeout((100*HZ)/1000);
+/* <--- 2010/9/2, modified by Panasonic */
+        }
+
+		/*
+		 * xHCI needs to issue an address device command later
+		 * in the hub_port_init sequence for SS/HS/FS/LS devices.
+		 */
+		if (!(hcd->driver->flags & HCD_USB3)) {
+			/* set the address */
+			choose_address(udev);
+			if (udev->devnum <= 0) {
+				status = -ENOTCONN;	/* Don't retry */
+				goto loop;
+			}
 		}
 
-		/* reset and get descriptor */
+		/* reset (non-USB 3.0 devices) and get descriptor */
 		status = hub_port_init(hub, udev, port1, i);
 		if (status < 0)
 			goto loop;
@@ -2860,8 +3538,16 @@ loop:
 		usb_ep0_reinit(udev);
 		release_address(udev);
 		usb_put_dev(udev);
+/*         /\* Added by Panasonic, 2009/4/17 >>>>> *\/ */
+/*         if ((status == -EMSGSIZE) || (status == -EPIPE)) */
+/*             goto done; */
+/*         /\* <<<< Added by Panasonic, 2009/4/17 *\/ */
 		if ((status == -ENOTCONN) || (status == -ENOTSUPP))
 			break;
+        /* 2012/03/14, addeed by Panasonic PAVC ---> */
+        if ((hcd->driver->flags & HCD_USB3) && status==-EPROTO)
+            break;
+        /* <--- 2012/03/14, added by Panasonic PAVC */
 	}
 	if (hub->hdev->parent ||
 			!hcd->driver->port_handed_over ||
@@ -3015,6 +3701,9 @@ static void hub_events(void)
 					USB_PORT_FEAT_C_SUSPEND);
 				udev = hdev->children[i-1];
 				if (udev) {
+					/* TRSMRCY = 10 msec */
+					msleep(10);
+
 					usb_lock_device(udev);
 					ret = remote_wakeup(hdev->
 							children[i-1]);
@@ -3036,7 +3725,7 @@ static void hub_events(void)
 					i);
 				clear_port_feature(hdev, i,
 					USB_PORT_FEAT_C_OVER_CURRENT);
-				hub_power_on(hub);
+				hub_power_on(hub, true);
 			}
 
 			if (portchange & USB_PORT_STAT_C_RESET) {
@@ -3071,7 +3760,7 @@ static void hub_events(void)
 				dev_dbg (hub_dev, "overcurrent change\n");
 				msleep(500);	/* Cool down */
 				clear_hub_feature(hdev, C_HUB_OVER_CURRENT);
-                        	hub_power_on(hub);
+                        	hub_power_on(hub, true);
 			}
 		}
 
@@ -3271,6 +3960,7 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
 {
 	struct usb_device		*parent_hdev = udev->parent;
 	struct usb_hub			*parent_hub;
+	struct usb_hcd			*hcd = bus_to_hcd(udev->bus); /* 2010/7/14, back-porting from 2.6.33 by Panasonic */
 	struct usb_device_descriptor	descriptor = udev->descriptor;
 	int 				i, ret = 0;
 	int				port1 = udev->portnum;
@@ -3310,9 +4000,22 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
 		udev->descriptor = descriptor;	/* for disconnect() calls */
 		goto re_enumerate;
   	}
-  
+
+	/* Restore the device's previous configuration */
 	if (!udev->actconfig)
 		goto done;
+
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic ---> */
+	mutex_lock(&hcd->bandwidth_mutex);
+	ret = usb_hcd_alloc_bandwidth(udev, udev->actconfig, NULL, NULL);
+	if (ret < 0) {
+		dev_warn(&udev->dev,
+				"Busted HC?  Not enough HCD resources for "
+				"old configuration.\n");
+		mutex_unlock(&hcd->bandwidth_mutex);
+		goto re_enumerate;
+	}
+/* <--- 2010/7/14, back-porting from 2.6.33 by Panasonic */
 
 	ret = usb_control_msg(udev, usb_sndctrlpipe(udev, 0),
 			USB_REQ_SET_CONFIGURATION, 0,
@@ -3322,20 +4025,37 @@ static int usb_reset_and_verify_device(struct usb_device *udev)
 		dev_err(&udev->dev,
 			"can't restore configuration #%d (error=%d)\n",
 			udev->actconfig->desc.bConfigurationValue, ret);
+		mutex_unlock(&hcd->bandwidth_mutex); /* 2010/7/14, back-porting from 2.6.33 by Panasonic */
 		goto re_enumerate;
   	}
+    mutex_unlock(&hcd->bandwidth_mutex); /* 2010/7/14, back-porting from 2.6.33 by Panasonic */
 	usb_set_device_state(udev, USB_STATE_CONFIGURED);
 
+	/* Put interfaces back into the same altsettings as before.
+	 * Don't bother to send the Set-Interface request for interfaces
+	 * that were already in altsetting 0; besides being unnecessary,
+	 * many devices can't handle it.  Instead just reset the host-side
+	 * endpoint state.
+	 */
 	for (i = 0; i < udev->actconfig->desc.bNumInterfaces; i++) {
 		struct usb_interface *intf = udev->actconfig->interface[i];
 		struct usb_interface_descriptor *desc;
 
-		/* set_interface resets host side toggle even
-		 * for altsetting zero.  the interface may have no driver.
-		 */
 		desc = &intf->cur_altsetting->desc;
-		ret = usb_set_interface(udev, desc->bInterfaceNumber,
-			desc->bAlternateSetting);
+		if (desc->bAlternateSetting == 0) {
+			usb_disable_interface(udev, intf, true);
+			usb_enable_interface(udev, intf, true);
+			ret = 0;
+		} else {
+			/* Let the bandwidth allocation function know that this
+			 * device has been reset, and it will have to use
+			 * alternate setting 0 as the current alternate setting.
+			 */
+			intf->resetting_device = 1; /* 2010/7/14, back-porting from 2.6.33 by Panasonic */
+			ret = usb_set_interface(udev, desc->bInterfaceNumber,
+					desc->bAlternateSetting);
+			intf->resetting_device = 0;/* 2010/7/14, back-porting from 2.6.33 by Panasonic */
+		}
 		if (ret < 0) {
 			dev_err(&udev->dev, "failed to restore interface %d "
 				"altsetting %d (error=%d)\n",
@@ -3434,3 +4154,46 @@ int usb_reset_device(struct usb_device *udev)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(usb_reset_device);
+
+
+/**
+ * usb_queue_reset_device - Reset a USB device from an atomic context
+ * @iface: USB interface belonging to the device to reset
+ *
+ * This function can be used to reset a USB device from an atomic
+ * context, where usb_reset_device() won't work (as it blocks).
+ *
+ * Doing a reset via this method is functionally equivalent to calling
+ * usb_reset_device(), except for the fact that it is delayed to a
+ * workqueue. This means that any drivers bound to other interfaces
+ * might be unbound, as well as users from usbfs in user space.
+ *
+ * Corner cases:
+ *
+ * - Scheduling two resets at the same time from two different drivers
+ *   attached to two different interfaces of the same device is
+ *   possible; depending on how the driver attached to each interface
+ *   handles ->pre_reset(), the second reset might happen or not.
+ *
+ * - If a driver is unbound and it had a pending reset, the reset will
+ *   be cancelled.
+ *
+ * - This function can be called during .probe() or .disconnect()
+ *   times. On return from .disconnect(), any pending resets will be
+ *   cancelled.
+ *
+ * There is no no need to lock/unlock the @reset_ws as schedule_work()
+ * does its own.
+ *
+ * NOTE: We don't do any reference count tracking because it is not
+ *     needed. The lifecycle of the work_struct is tied to the
+ *     usb_interface. Before destroying the interface we cancel the
+ *     work_struct, so the fact that work_struct is queued and or
+ *     running means the interface (and thus, the device) exist and
+ *     are referenced.
+ */
+void usb_queue_reset_device(struct usb_interface *iface)
+{
+	schedule_work(&iface->reset_ws);
+}
+EXPORT_SYMBOL_GPL(usb_queue_reset_device);

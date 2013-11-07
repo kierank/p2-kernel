@@ -63,6 +63,7 @@
  *  conditions as for reception, but depending on the TXF bit).
  *  The driver then cleans up the buffer.
  */
+/* $Id: gianfar.c 21639 2013-04-09 00:15:24Z Yasuyuki Matsumoto $ */
 
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -92,9 +93,20 @@
 #include <linux/crc32.h>
 #include <linux/mii.h>
 #include <linux/phy.h>
+/* 2009/9/15, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION
+#include <linux/if.h>
+#include <linux/gfar_user.h>
+#endif  /* CONFIG_GIANFAR_EXTENTION */
+/* <<<< 2009/9/15, added by Panasonic */
 
 #include "gianfar.h"
 #include "gianfar_mii.h"
+/* 2009/9/10, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+#include "gianfar_dsas.h"
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/10, added by Panasonic */
 
 #define TX_TIMEOUT      (1*HZ)
 #undef BRIEF_GFAR_ERRORS
@@ -102,6 +114,14 @@
 
 const char gfar_driver_name[] = "Gianfar Ethernet";
 const char gfar_driver_version[] = "1.3";
+
+/* 2009/9/14,  added by panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_PROC_FS
+#include <linux/proc_fs.h>
+static struct proc_dir_entry *gfar_pentry = NULL;
+static const char gfar_pentry_name[] = "driver/gianfar";
+#endif  /* CONFIG_GIANFAR_EXTENTION_PROC_FS */
+/* <<<< 2009/9/14,  added by panasonic */
 
 static int gfar_enet_open(struct net_device *dev);
 static int gfar_start_xmit(struct sk_buff *skb, struct net_device *dev);
@@ -139,6 +159,18 @@ static void gfar_halt_nodisable(struct net_device *dev);
 void gfar_start(struct net_device *dev);
 static void gfar_clear_exact_match(struct net_device *dev);
 static void gfar_set_mac_for_addr(struct net_device *dev, int num, u8 *addr);
+
+/* 2009/9/18, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+static void gfar_hwblock(int enable, unsigned long data);
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/18, added by Panasonic */
+
+/* Added by Panasonic, 2009/08/31 >>> */
+#ifdef CONFIG_GIANFAR_EXTENTION
+static int gfar_ioctl(struct net_device *dev, struct ifreq *rq, int cmd);
+#endif  /* CONFIG_GIANFAR_EXTENTION */
+/* <<< Added by Panasonic, 2009/08/31 */
 
 extern const struct ethtool_ops gfar_ethtool_ops;
 
@@ -264,6 +296,12 @@ static int gfar_probe(struct platform_device *pdev)
 	dev->mtu = 1500;
 	dev->set_multicast_list = gfar_set_multi;
 
+/* Added by Panasonic, 2009/08/31 >>> */
+#ifdef CONFIG_GIANFAR_EXTENTION
+    dev->do_ioctl = gfar_ioctl;
+#endif  /* CONFIG_GIANFAR_EXTENTION */
+/* <<< Added by Panasonic, 2009/08/31 */
+
 	dev->ethtool_ops = &gfar_ethtool_ops;
 
 	if (priv->einfo->device_flags & FSL_GIANFAR_DEV_HAS_CSUM) {
@@ -350,6 +388,59 @@ static int gfar_probe(struct platform_device *pdev)
 	/* Create all the sysfs files */
 	gfar_init_sysfs(dev);
 
+/* 2009/9/16,2012/11/19  added by panasonic >>>> */
+#if defined(CONFIG_GIANFAR_EXTENTION_DSAS)
+
+    /* Set receive QUE filer and disable filer */
+    {
+        int i;
+        u32 tempval;
+        tempval = gfar_read(&priv->regs->rctrl);
+        tempval &= ~RCTRL_FILREN ;
+        gfar_write(&priv->regs->rctrl, tempval);
+        for(i=0;i<256;i++){
+            gfar_write(&priv->regs->rqfar, i);
+            /* Always discard frame */
+            gfar_write(&priv->regs->rqfcr, 0x00000120);
+            gfar_write(&priv->regs->rqfpr, 0x00000000);
+            printk(KERN_DEBUG "***[%d] %08X:%08X\n",
+                   i,gfar_read(&priv->regs->rqfcr),gfar_read(&priv->regs->rqfpr));
+        }
+        gfar_write(&priv->regs->rqfar, 0);
+
+    }
+
+    /* Initialize DSAS (DoS Atack Shielding) */
+    {
+        char pname[16];
+        snprintf(pname,sizeof(pname)-1,"dsas-%s",dev->name);
+        *(pname+sizeof(pname)-1)='\0';
+        err = gfar_dsas_init(&priv->dsas,pname,(unsigned long)dev);
+        if (err) {
+            printk(KERN_ERR "%s: Cannot initialize DSAS (DoS Atack Shielding): err=%d.\n",
+                   dev->name, err);
+            goto register_fail;
+        }
+        gfar_dsas_set_hwblock(&priv->dsas,gfar_hwblock);
+    }
+
+/* 2012/11/19, modified by Panasonic */
+#ifdef CONFIG_GIANFAR_EXTENTION_PROC_FS
+
+	/* Create procfs entry for DSAS */
+    if(NULL!=gfar_pentry){
+        if(!create_proc_read_entry(gfar_dsas_name(&priv->dsas),
+                                   0, gfar_pentry, gfar_dsas_procfunc, (void*)&priv->dsas)){
+            printk(KERN_WARNING "WARNING: Can't create /proc/%s/%s\n",
+                   gfar_pentry_name,gfar_dsas_name(&priv->dsas));
+        }
+    }
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_PROC_FS */
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/16,2012/11/9,  added by panasonic */
+
 	/* Print out the device info */
 	printk(KERN_INFO DEVICE_NAME "%s\n",
 	       dev->name, print_mac(mac, dev->dev_addr));
@@ -360,7 +451,7 @@ static int gfar_probe(struct platform_device *pdev)
 	printk(KERN_INFO "%s: %d/%d RX/TX BD ring size\n",
 	       dev->name, priv->rx_ring_size, priv->tx_ring_size);
 
-	return 0;
+    return 0;
 
 register_fail:
 	iounmap(priv->regs);
@@ -374,8 +465,34 @@ static int gfar_remove(struct platform_device *pdev)
 	struct net_device *dev = platform_get_drvdata(pdev);
 	struct gfar_private *priv = netdev_priv(dev);
 
+/* 2009/9/14,  added by panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_PROC_FS
+
+    /* remove procfs entry */
+    if(NULL!=gfar_pentry)
+        remove_proc_entry(dev->name, gfar_pentry);
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_PROC_FS */
+/* <<<< 2009/9/14,  added by panasonic */
+
+/* 2009/9/10, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+
+    /* Exit DSAS (DoS Atack Shielding) */
+    {
+        int err = gfar_dsas_exit(&priv->dsas);
+        if (err) {
+            printk(KERN_ERR "%s: Cannot exit DSAS (DoS Atack Shielding): err=%d.\n",
+                   dev->name, err);
+        }
+    }
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/10, added by Panasonic */
+
 	platform_set_drvdata(pdev, NULL);
 
+	unregister_netdev (dev);
 	iounmap(priv->regs);
 	free_netdev(dev);
 
@@ -1629,49 +1746,99 @@ int gfar_clean_rx_ring(struct net_device *dev, int rx_work_limit)
 	bdp = priv->cur_rx;
 
 	while (!((bdp->status & RXBD_EMPTY) || (--rx_work_limit < 0))) {
-		struct sk_buff *newskb;
+        struct sk_buff *newskb;
 		rmb();
 
-		/* Add another skb for the future */
-		newskb = gfar_new_skb(dev);
+/* 2009/9/17, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+        if(howmany==0 || gfar_dsas_state(&priv->dsas)==ST_DSAS_NORMAL){
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/17, added by Panasonic */
 
-		skb = priv->rx_skbuff[priv->skb_currx];
+            /* Add another skb for the future */
+            newskb = gfar_new_skb(dev);
 
-		/* We drop the frame if we failed to allocate a new buffer */
-		if (unlikely(!newskb || !(bdp->status & RXBD_LAST) ||
-				 bdp->status & RXBD_ERR)) {
-			count_errors(bdp->status, dev);
+            skb = priv->rx_skbuff[priv->skb_currx];
 
-			if (unlikely(!newskb))
-				newskb = skb;
+            /* We drop the frame if we failed to allocate a new buffer */
+            if (unlikely(!newskb || !(bdp->status & RXBD_LAST) ||
+                         bdp->status & RXBD_ERR)) {
+                count_errors(bdp->status, dev);
 
-			if (skb) {
-				dma_unmap_single(&priv->dev->dev,
-						bdp->bufPtr,
-						priv->rx_buffer_size,
-						DMA_FROM_DEVICE);
+                if (skb) {
+                    dma_unmap_single(&priv->dev->dev,
+                                     bdp->bufPtr,
+                                     priv->rx_buffer_size,
+                                     DMA_FROM_DEVICE);
+                }
 
-				dev_kfree_skb_any(skb);
-			}
-		} else {
-			/* Increment the number of packets */
-			dev->stats.rx_packets++;
-			howmany++;
+                if (unlikely(!newskb)){
+                    newskb = skb;
+                    if((bdp->status & RXBD_LAST) && !(bdp->status & RXBD_ERR)){
+                        /* dropped packets */
+                        dev->stats.rx_dropped++;
+/* 2009/9/10, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+                        /* update rx-packets number in estimated period */
+                        gfar_dsas_countup(&priv->dsas);
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/10, added by Panasonic */
+                    }
+                }else if(skb){
+                    dev_kfree_skb_any(skb);
+                }
 
-			/* Remove the FCS from the packet length */
-			pkt_len = bdp->length - 4;
+            } else {
+                /* Increment the number of packets */
+                dev->stats.rx_packets++;
+                howmany++;
 
-			gfar_process_frame(dev, skb, pkt_len);
+/* 2009/9/10, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+                /* update rx-packets number in estimated period */
+                gfar_dsas_countup(&priv->dsas);
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/10, added by Panasonic */
 
-			dev->stats.rx_bytes += pkt_len;
-		}
+                /* Remove the FCS from the packet length */
+                pkt_len = bdp->length - 4;
 
-		dev->last_rx = jiffies;
+                gfar_process_frame(dev, skb, pkt_len);
 
-		priv->rx_skbuff[priv->skb_currx] = newskb;
+                dev->stats.rx_bytes += pkt_len;
+            }
 
-		/* Setup the new bdp */
-		gfar_new_rxbdp(dev, bdp, newskb);
+            dev->last_rx = jiffies;
+
+            priv->rx_skbuff[priv->skb_currx] = newskb;
+
+            /* Setup the new bdp */
+            gfar_new_rxbdp(dev, bdp, newskb);
+
+/* 2009/9/10, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+        } else {                /* in DoS attacking */
+            u16 flags;
+
+            /* dropped packets */
+            dev->stats.rx_dropped++;
+
+            /* update rx-packets number in estimated period */
+            gfar_dsas_countup(&priv->dsas);
+
+            dev->last_rx = jiffies;
+
+            flags= RXBD_EMPTY | RXBD_INTERRUPT;
+            if (bdp == priv->rx_bd_base + priv->rx_ring_size - 1)
+                flags |= RXBD_WRAP;
+
+            eieio();
+
+            *(volatile u32 *)bdp = (u32)flags << 16;
+
+        }
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/10, added by Panasonic */
 
 		/* Update to the next pointer */
 		if (bdp->status & RXBD_WRAP)
@@ -2094,6 +2261,158 @@ static irqreturn_t gfar_error(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+/* 2009/9/18, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+
+static void gfar_filer_start(struct net_device *dev)
+{
+    struct gfar_private *priv = netdev_priv(dev);
+    u32 tempval;
+
+    spin_lock(&priv->rxlock);
+
+    tempval = gfar_read(&priv->regs->rctrl);
+    tempval |= RCTRL_FILREN ;
+    gfar_write(&priv->regs->rctrl, tempval);
+
+    spin_unlock(&priv->rxlock);
+}
+
+static void gfar_filer_stop(struct net_device *dev)
+{
+    struct gfar_private *priv = netdev_priv(dev);
+    u32 tempval;
+
+    spin_lock(&priv->rxlock);
+
+    tempval = gfar_read(&priv->regs->rctrl);
+    tempval &= ~RCTRL_FILREN ;
+    gfar_write(&priv->regs->rctrl, tempval);
+
+    spin_unlock(&priv->rxlock);
+}
+
+static void gfar_hwblock(int enable, unsigned long data)
+{
+    struct net_device *dev = (struct net_device *)data;
+    if(enable)
+        gfar_filer_start(dev);
+    else
+        gfar_filer_stop(dev);
+}
+
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/18, added by Panasonic */
+
+/* Added by Panasonic, 2009/08/31 >>> */
+#ifdef CONFIG_GIANFAR_EXTENTION
+
+static int gfar_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
+{
+    int ret = 0;
+    struct gfar_private *priv = netdev_priv(dev);
+
+    switch(cmd){
+
+/* 2009/9/15, added by Panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_DSAS
+
+    case GFAR_IOC_DSAS:     /* do start or stop */
+
+        {
+            struct gfar_ioc_dsas *cmdp = NULL;;
+
+            /* allocte */
+            cmdp = (struct gfar_ioc_dsas *)kmalloc(sizeof(struct gfar_ioc_dsas),GFP_KERNEL);
+            if(NULL==cmdp){
+                ret = -ENOMEM;
+                goto fail_cmd;
+            }
+
+            /* get command from user space */
+            if(copy_from_user((void*)cmdp, rq->ifr_data, sizeof(struct gfar_ioc_dsas))){
+                ret = -EFAULT;
+                goto fail_cmd;
+            }
+
+            /* start/stop */
+            switch(cmdp->cmd){
+            case CMD_DSAS_GET_INFO:
+                /* get information about DSAS */
+                ret=gfar_dsas_info( &priv->dsas, &cmdp->opt.info);
+                break;
+            case CMD_DSAS_SET_PARAM:
+                ret = gfar_dsas_set_param(&priv->dsas, &cmdp->opt.param);
+                break;
+            case CMD_DSAS_GET_PARAM:
+                ret = gfar_dsas_get_param(&priv->dsas, &cmdp->opt.param);
+                break;
+            case CMD_DSAS_START:
+                if(gfar_dsas_running(&priv->dsas)){
+                    printk(KERN_ERR "%s %s(%d): DSAS is running now.\n",
+                           dev->name,__FILE__,__LINE__);
+                    ret = -EINVAL;
+                    goto fail_cmd;
+                }
+                ret = gfar_dsas_start(&priv->dsas);
+                break;
+            case CMD_DSAS_STOP:
+                if(!gfar_dsas_running(&priv->dsas)){
+                    printk(KERN_ERR "%s %s(%d): DSAS is NOT running yet.\n",
+                           dev->name,__FILE__,__LINE__);
+                    ret = -EINVAL;
+                    goto fail_cmd;
+                }
+                ret =  gfar_dsas_stop(&priv->dsas);
+                break;
+            }
+            if(ret){
+                goto fail_cmd;
+            }
+
+
+            /* put command to user space */
+            if(copy_to_user(rq->ifr_data, (void*)cmdp, sizeof(struct gfar_ioc_dsas))){
+                ret = -EFAULT;
+                goto fail_cmd;
+            }
+
+            /* start/stop */
+        fail_cmd:
+
+            /* free */
+            if(NULL != cmdp){
+                kfree(cmdp);
+                cmdp = NULL;
+            }
+        
+        }
+        break;
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_DSAS */
+/* <<<< 2009/9/10, added by Panasonic */
+
+    default:
+#ifdef CONFIG_GIANFAR_EXTENTION_MIIREG
+        if (!netif_running(dev)){
+            ret = -EINVAL;
+            goto out;
+        }
+        ret = phy_mii_ioctl(priv->phydev, if_mii(rq), cmd);
+#else  /* CONFIG_GIANFAR_EXTENTION_MIIREG */
+        ret = -ENOTTY;
+#endif  /* CONFIG_GIANFAR_EXTENTION_MIIREG */
+    }
+
+ out:
+    return ret;
+}
+
+#endif  /* CONFIG_GIANFAR_EXTENTION */
+/* <<< Added by Panasonic, 2009/08/31 */
+
+
 /* work with hotplug and coldplug */
 MODULE_ALIAS("platform:fsl-gianfar");
 
@@ -2111,23 +2430,68 @@ static struct platform_driver gfar_driver = {
 
 static int __init gfar_init(void)
 {
-	int err = gfar_mdio_init();
+    int err;
 
+    /* 2009/9/14,  added by panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_PROC_FS
+
+    /* create directry for proc_fs */
+    gfar_pentry = create_proc_entry(gfar_pentry_name, S_IFDIR, NULL);
+    if (NULL==gfar_pentry) {
+        printk(KERN_WARNING "WARNING: Can't create /proc/%s\n",gfar_pentry_name);
+    }
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_PROC_FS */
+    /* <<<< 2009/9/14,  added by panasonic */
+
+	err = gfar_mdio_init();
 	if (err)
-		return err;
+		goto fail;
 
 	err = platform_driver_register(&gfar_driver);
-
-	if (err)
+	if (err){
 		gfar_mdio_exit();
+        goto fail;
+    }
+
+ fail:
+
+    if(err){
+
+/* 2009/9/14,  added by panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_PROC_FS
+
+        /* remove directry for proc_fs */
+        if(NULL!=gfar_pentry){
+            remove_proc_entry(gfar_pentry_name, NULL);
+            gfar_pentry = NULL;
+        }
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_PROC_FS */
+/* <<<< 2009/9/14,  added by panasonic */
+
+    }
 
 	return err;
 }
 
 static void __exit gfar_exit(void)
 {
+
 	platform_driver_unregister(&gfar_driver);
 	gfar_mdio_exit();
+
+    /* 2009/9/14,  added by panasonic >>>> */
+#ifdef CONFIG_GIANFAR_EXTENTION_PROC_FS
+
+    /* remove directry for proc_fs */
+    if(NULL!=gfar_pentry)
+        remove_proc_entry(gfar_pentry_name, NULL);
+    gfar_pentry = NULL;
+
+#endif  /* CONFIG_GIANFAR_EXTENTION_PROC_FS */
+    /* <<<< 2009/9/14,  added by panasonic */
+
 }
 
 module_init(gfar_init);

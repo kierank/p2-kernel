@@ -1986,8 +1986,9 @@ static int build_zonelists_node(pg_data_t *pgdat, struct zonelist *zonelist,
  * set_zonelist_order() will set this to NODE or ZONE.
  */
 static int current_zonelist_order = ZONELIST_ORDER_DEFAULT;
+#if ! defined(CONFIG_DISABLE_INIT_MESSAGE) /* Added by Panasonic for fast bootup */
 static char zonelist_order_name[3][8] = {"Default", "Node", "Zone"};
-
+#endif /* ! CONFIG_DISABLE_INIT_MESSAGE */
 
 #ifdef CONFIG_NUMA
 /* The value user specified ....changed by config */
@@ -2419,12 +2420,15 @@ void build_all_zonelists(void)
 	else
 		page_group_by_mobility_disabled = 0;
 
+#if ! defined(CONFIG_DISABLE_INIT_MESSAGE) /* Added by Panasonic for fast bootup */
 	printk("Built %i zonelists in %s order, mobility grouping %s.  "
 		"Total pages: %ld\n",
 			num_online_nodes(),
 			zonelist_order_name[current_zonelist_order],
 			page_group_by_mobility_disabled ? "off" : "on",
 			vm_total_pages);
+#endif /* ! CONFIG_DISABLE_INIT_MESSAGE */
+
 #ifdef CONFIG_NUMA
 	printk("Policy zone: %s\n", zone_names[policy_zone]);
 #endif
@@ -3980,6 +3984,7 @@ void __init free_area_init_nodes(unsigned long *max_zone_pfn)
 	find_zone_movable_pfns_for_nodes(zone_movable_pfn);
 
 	/* Print out the zone ranges */
+#if ! defined(CONFIG_DISABLE_INIT_MESSAGE) /* Added by Panasonic for fast bootup */
 	printk("Zone PFN ranges:\n");
 	for (i = 0; i < MAX_NR_ZONES; i++) {
 		if (i == ZONE_MOVABLE)
@@ -4003,6 +4008,7 @@ void __init free_area_init_nodes(unsigned long *max_zone_pfn)
 		printk("  %3d: %0#10lx -> %0#10lx\n", early_node_map[i].nid,
 						early_node_map[i].start_pfn,
 						early_node_map[i].end_pfn);
+#endif /* !CONFIG_DISABLE_INIT_MESSAGE */
 
 	/* Initialise every node */
 	mminit_verify_pageflags_layout();

@@ -703,7 +703,7 @@ static int arp_process(struct sk_buff *skb)
 	struct arphdr *arp;
 	unsigned char *arp_ptr;
 	struct rtable *rt;
-	unsigned char *sha;
+	unsigned char *sha, *tha;				// <--- modified by Ito 20090728
 	__be32 sip, tip;
 	u16 dev_type = dev->type;
 	int addr_type;
@@ -768,7 +768,8 @@ static int arp_process(struct sk_buff *skb)
 	sha	= arp_ptr;
 	arp_ptr += dev->addr_len;
 	memcpy(&sip, arp_ptr, 4);
-	arp_ptr += 4;
+	arp_ptr += 4;				// <--- modified by Ito 20090728
+	tha	= arp_ptr;
 	arp_ptr += dev->addr_len;
 	memcpy(&tip, arp_ptr, 4);
 /*
@@ -810,6 +811,19 @@ static int arp_process(struct sk_buff *skb)
 				 dev->dev_addr, sha);
 		goto out;
 	}
+
+// <--- add by ooue 20080917 (for Gratuitous ARP) -- modified by Ito 20090728
+	if (arp->ar_op == htons(ARPOP_REQUEST) && inet_addr_type(net, tip) == RTN_LOCAL) {
+		if ((sip == tip) &&
+			(memcmp(tha, "\0\0\0\0\0\0", 6) == 0 || memcmp(tha, "\xff\xff\xff\xff\xff\xff", 6) == 0) &&
+			(memcmp(sha, dev->dev_addr, dev->addr_len) != 0) &&
+		    !arp_ignore(in_dev,sip,tip)) {
+			
+			arp_send(ARPOP_REPLY,ETH_P_ARP,tip,dev,tip,sha,dev->dev_addr,sha);
+			goto out;
+		}
+	}
+// ---> add by ooue -- modified by Ito 20090728
 
 	if (arp->ar_op == htons(ARPOP_REQUEST) &&
 	    ip_route_input(skb, tip, sip, 0, dev) == 0) {

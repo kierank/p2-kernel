@@ -564,8 +564,10 @@ asmlinkage void __init start_kernel(void)
 	tick_init();
 	boot_cpu_init();
 	page_address_init();
+#if ! defined(CONFIG_DISABLE_INIT_MESSAGE) /* Added by Panasonic for fast bootup */
 	printk(KERN_NOTICE);
 	printk(linux_banner);
+#endif /* ! CONFIG_DISABLE_INIT_MESSAGE */
 	setup_arch(&command_line);
 	mm_init_owner(&init_mm, &init_task);
 	setup_command_line(command_line);
@@ -587,7 +589,9 @@ asmlinkage void __init start_kernel(void)
 	preempt_disable();
 	build_all_zonelists();
 	page_alloc_init();
+#if ! defined(CONFIG_DISABLE_INIT_MESSAGE) /* Added by Panasonic for fast bootup */
 	printk(KERN_NOTICE "Kernel command line: %s\n", boot_command_line);
+#endif /* ! CONFIG_DISABLE_INIT_MESSAGE */
 	parse_early_param();
 	parse_args("Booting kernel", static_command_line, __start___param,
 		   __stop___param - __start___param,
@@ -808,6 +812,12 @@ static int noinline init_post(void)
 
 	current->signal->flags |= SIGNAL_UNKILLABLE;
 
+#if defined(CONFIG_RET_LOGLEVEL) /* Added by Panasonic for fast bootup --> */
+	printk(KERN_ERR "Return console loglevel %d to %d\n",
+		   console_loglevel, default_console_loglevel);
+	console_loglevel = default_console_loglevel;
+#endif /* CONFIG_RET_LOGLEVEL <-- Added by Panasonic for fast bootup */
+	
 	if (ramdisk_execute_command) {
 		run_init_process(ramdisk_execute_command);
 		printk(KERN_WARNING "Failed to execute %s\n",

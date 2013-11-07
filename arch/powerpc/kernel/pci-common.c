@@ -15,6 +15,7 @@
  * as published by the Free Software Foundation; either version
  * 2 of the License, or (at your option) any later version.
  */
+/* $Id: pci-common.c 11065 2010-12-10 06:42:32Z Noguchi Isao $ */
 
 #undef DEBUG
 
@@ -290,7 +291,13 @@ static struct resource *__pci_mmap_make_offset(struct pci_dev *dev,
 #endif
 		res_bit = IORESOURCE_MEM;
 	} else {
+/* 2010/12/9, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_PPC_MPC83XX_PCI_IOMAP
+        io_offset = 0;
+#else  /* ! CONFIG_PPC_MPC83XX_PCI_IOMAP */
 		io_offset = (unsigned long)hose->io_base_virt - _IO_BASE;
+#endif  /* CONFIG_PPC_MPC83XX_PCI_IOMAP */
+/* <--- 2010/12/9, modified by Panasonic (SAV) */
 		*offset += io_offset;
 		res_bit = IORESOURCE_IO;
 	}
@@ -452,7 +459,13 @@ void pci_resource_to_user(const struct pci_dev *dev, int bar,
 		return;
 
 	if (rsrc->flags & IORESOURCE_IO)
+/* 2010/12/9, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_PPC_MPC83XX_PCI_IOMAP
+        offset = 0;
+#else  /* ! CONFIG_PPC_MPC83XX_PCI_IOMAP */
 		offset = (unsigned long)hose->io_base_virt - _IO_BASE;
+#endif  /* CONFIG_PPC_MPC83XX_PCI_IOMAP */
+/* <--- 2010/12/9, modified by Panasonic (SAV) */
 
 	/* We pass a fully fixed up address to userland for MMIO instead of
 	 * a BAR value because X is lame and expects to be able to use that
@@ -689,7 +702,13 @@ void pcibios_resource_to_bus(struct pci_dev *dev, struct pci_bus_region *region,
 	if (!hose)
 		return;
 	if (res->flags & IORESOURCE_IO) {
+/* 2010/12/9, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_PPC_MPC83XX_PCI_IOMAP
+        offset = 0;
+#else  /* ! CONFIG_PPC_MPC83XX_PCI_IOMAP */
 		offset = (unsigned long)hose->io_base_virt - _IO_BASE;
+#endif  /* CONFIG_PPC_MPC83XX_PCI_IOMAP */
+/* <--- 2010/12/9, modified by Panasonic (SAV) */
 		mask = 0xffffffffu;
 	} else if (res->flags & IORESOURCE_MEM)
 		offset = hose->pci_mem_offset;
@@ -708,7 +727,13 @@ void pcibios_bus_to_resource(struct pci_dev *dev, struct resource *res,
 	if (!hose)
 		return;
 	if (res->flags & IORESOURCE_IO) {
+/* 2010/12/9, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_PPC_MPC83XX_PCI_IOMAP
+        offset = 0;
+#else  /* ! CONFIG_PPC_MPC83XX_PCI_IOMAP */
 		offset = (unsigned long)hose->io_base_virt - _IO_BASE;
+#endif  /* CONFIG_PPC_MPC83XX_PCI_IOMAP */
+/* <--- 2010/12/9, modified by Panasonic (SAV) */
 		mask = 0xffffffffu;
 	} else if (res->flags & IORESOURCE_MEM)
 		offset = hose->pci_mem_offset;
@@ -724,7 +749,13 @@ static void __devinit fixup_resource(struct resource *res, struct pci_dev *dev)
 	resource_size_t offset = 0, mask = (resource_size_t)-1;
 
 	if (res->flags & IORESOURCE_IO) {
+/* 2010/12/9, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_PPC_MPC83XX_PCI_IOMAP
+        offset = 0;
+#else  /* ! CONFIG_PPC_MPC83XX_PCI_IOMAP */
 		offset = (unsigned long)hose->io_base_virt - _IO_BASE;
+#endif  /* CONFIG_PPC_MPC83XX_PCI_IOMAP */
+/* <--- 2010/12/9, modified by Panasonic (SAV) */
 		mask = 0xffffffffu;
 	} else if (res->flags & IORESOURCE_MEM)
 		offset = hose->pci_mem_offset;

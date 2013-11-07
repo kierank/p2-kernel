@@ -24,6 +24,7 @@
  * 		sequentially scan LUNs up until some maximum is reached,
  * 		or a LUN is seen that cannot have a device attached to it.
  */
+/* $Id: scsi_scan.c 7609 2010-06-09 05:51:13Z Hoshino Hiromasa $ */
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -254,6 +255,21 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	sdev->lun = lun;
 	sdev->channel = starget->channel;
 	sdev->sdev_state = SDEV_CREATED;
+
+	/* Modified by Panasonic (SAV), 2009-sep-28 */
+	sdev->extra = NULL;
+	sdev->notify_ops = NULL;
+	/*------------------------------------------*/
+
+/* 2010/4/8-13, added by Panasonic >>>> */
+#ifdef CONFIG_P2PF_SCSI_DISK_BLK_ERROR
+    sdev->blk_err_count=0;
+    memset(&(sdev->blk_err_status),0,sizeof(struct scsi_ioctl_blk_err));
+    init_waitqueue_head( &(sdev->blk_err_wait_queue) );
+	spin_lock_init(&sdev->blk_err_lock);
+#endif  /* CONFIG_P2PF_SCSI_DISK_BLK_ERROR */
+/* <<<< 2010/4/8-13, added by Panasonic */
+
 	INIT_LIST_HEAD(&sdev->siblings);
 	INIT_LIST_HEAD(&sdev->same_target_siblings);
 	INIT_LIST_HEAD(&sdev->cmd_list);
@@ -827,11 +843,19 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	if (inq_result[7] & 0x10)
 		sdev->sdtr = 1;
 
+#if defined(CONFIG_DISABLE_SDPROBE_MESSAGE)
+	sdev_printk(KERN_DEBUG, sdev, "%s %.8s %.16s %.4s PQ: %d "
+			"ANSI: %d%s\n", scsi_device_type(sdev->type),
+			sdev->vendor, sdev->model, sdev->rev,
+			sdev->inq_periph_qual, inq_result[2] & 0x07,
+			(inq_result[3] & 0x0f) == 1 ? " CCS" : "");
+#else /* ! CONFIG_DISABLE_SDPROBE_MESSAGE */
 	sdev_printk(KERN_NOTICE, sdev, "%s %.8s %.16s %.4s PQ: %d "
 			"ANSI: %d%s\n", scsi_device_type(sdev->type),
 			sdev->vendor, sdev->model, sdev->rev,
 			sdev->inq_periph_qual, inq_result[2] & 0x07,
 			(inq_result[3] & 0x0f) == 1 ? " CCS" : "");
+#endif /* CONFIG_DISABLE_SDPROBE_MESSAGE */
 
 	if ((sdev->scsi_level >= SCSI_2) && (inq_result[7] & 2) &&
 	    !(*bflags & BLIST_NOTQ))

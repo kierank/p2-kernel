@@ -1,0 +1,30 @@
+## $Id: Kconfig 13117 2011-03-10 04:38:15Z Noguchi Isao $
+
+menuconfig ZION
+    tristate "Panasonic ZION Support"
+    default n
+	help
+        Select this option if you support Panasonic ZION Chip.
+
+if ZION
+	source drivers/p2pf/zion/AudioDSP/Kconfig
+	source drivers/p2pf/zion/DMAIF/Kconfig
+	source drivers/p2pf/zion/DVCIF/Kconfig
+	source drivers/p2pf/zion/NEOctrl/Kconfig
+	source drivers/p2pf/zion/ROMIF/Kconfig
+	source drivers/p2pf/zion/AudioProc/Kconfig
+	source drivers/p2pf/zion/DUELcore/Kconfig
+	source drivers/p2pf/zion/HOSTIF/Kconfig
+	source drivers/p2pf/zion/Matrix/Kconfig
+	source drivers/p2pf/zion/PCI/Kconfig
+	source drivers/p2pf/zion/VGA/Kconfig
+
+	config ZION_REDUCE_SDRAM_BY_HALF
+		bool "Reduce ZION SDRAM by half"
+        default n
+		help
+		  Select this option if you reduce ZION SDRAM by half.
+
+		  If unsure, say N.
+
+endif # ZION

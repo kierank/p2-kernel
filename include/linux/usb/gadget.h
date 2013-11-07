@@ -11,6 +11,7 @@
  *
  * This software is licensed under the GNU GPL version 2.
  */
+/* $Id: gadget.h 14816 2011-06-08 01:02:14Z Noguchi Isao $ */
 
 #ifndef __LINUX_USB_GADGET_H
 #define __LINUX_USB_GADGET_H
@@ -119,6 +120,10 @@ struct usb_ep_ops {
 
 	int (*fifo_status) (struct usb_ep *ep);
 	void (*fifo_flush) (struct usb_ep *ep);
+
+    /* 2011/4/8, added by Panasonic (PAVBU) */
+    int (*reset_queue) (struct usb_ep *ep);
+
 };
 
 /**
@@ -310,6 +315,22 @@ static inline int usb_ep_dequeue(struct usb_ep *ep, struct usb_request *req)
 	return ep->ops->dequeue(ep, req);
 }
 
+/* 2011/4/8, added by Panasonic (PAVBU) --> */
+/**
+ * usb_reset_queue - reset queue for an I/O request to an endpoint.
+ * @ep:the endpoint associated with the request
+ *
+ * Returns zero on success, else negative errno.
+ */
+static inline int usb_reset_queue(struct usb_ep *ep)
+{
+    if(!ep->ops->reset_queue)
+        return 0;
+	return ep->ops->reset_queue(ep);
+}
+/* <--- 2011/4/8, added by Panasonic (PAVBU) */
+
+
 /**
  * usb_ep_set_halt - sets the endpoint halt feature.
  * @ep: the non-isochronous endpoint being stalled
@@ -428,6 +449,11 @@ struct usb_gadget_ops {
 	int	(*pullup) (struct usb_gadget *, int is_on);
 	int	(*ioctl)(struct usb_gadget *,
 				unsigned code, unsigned long param);
+/* 2011/6/8, added by Panasonic (PAVBU) ---> */
+#ifdef CONFIG_USB_GADGET_UDCDEV
+    int (*check_connection)(struct usb_gadget *);
+#endif  /* CONFIG_USB_GADGET_UDCDEV */
+/* <--- 2011/6/8, added by Panasonic (PAVBU) */
 };
 
 /**

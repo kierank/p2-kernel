@@ -1,0 +1,69 @@
+# drivers/spd/Kconfig
+# $Id: Kconfig 5901 2010-03-24 23:56:01Z Noguchi Isao $
+
+menuconfig CODEC_VGA
+	bool "CODEC-VGA Driver" 
+    depends on ! ZION_VGA && FB
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+	  If unsure, say Y.
+
+if CODEC_VGA
+
+config CODEC_VGA_OF
+    bool "Get resource by OF description"
+    default n
+
+if ! CODEC_VGA_OF
+
+config CODEC_VGA_REG_ADDR
+    hex "CODEC-VGA control regsiter address"
+    default 0xe8001000
+
+config CODEC_VGA_REG_SIZE
+    hex "CODEC-VGA control regsiter byte size"
+    default 0x1000
+    
+config CODEC_VGA_FB_ADDR
+    hex "CODEC-VGA frame buffer address"
+    default 0xec000000
+
+config CODEC_VGA_FB_SIZE
+    hex "CODEC-VGA frame buffer byte size"
+    default 0x02000000
+
+config CODEC_VGA_SPRITE_NUM
+    int "CODEC-VGA sprite number"
+    default 4
+
+config CODEC_VGA_SPRITE_START_ADDR
+    hex "CODEC-VGA sprite buffer start address"
+    default 0xe8004000
+
+config CODEC_VGA_SPRITE_SIZE
+    hex "CODEC-VGA sprite buffer size"
+    default 0x1000
+
+endif # ! CODEC_VGA_OF
+
+
+config CODEC_VGA_BUFF_NUM
+	int "CODEC-VGA buffer Number"
+	default 32
+
+config CODEC_VGA_LFB_NUM
+	int "CODEC-VGA Local FB Number"
+	default 2
+
+config CODEC_VGA_DMA_CH
+    int "CODEC-VGA DMAC Channel to use [0-3]"
+    default 3
+    depends on ! CODEC_VGA_OF
+
+config CODEC_VGA_NO_RESET
+    bool "Don't reset CODEC-VGA at initializing"
+    default n
+
+endif # CODEC_VGA
+

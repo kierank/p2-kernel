@@ -183,6 +183,17 @@ static struct inode *alloc_inode(struct super_block *sb)
 		}
 		inode->i_private = NULL;
 		inode->i_mapping = mapping;
+
+/* Added by Panasonic for Reservoir Filesystems */
+		INIT_LIST_HEAD(&inode->i_reservoir_list);
+		inode->i_reservoir = NULL;
+		inode->i_rsrvr_flags = 0;
+		inode->i_rsrvr_count = 0;
+		inode->i_rsrvr_rt_count = 0;
+		inode->i_rsrvr_drct_count = 0;
+		inode->i_file_id = 0;
+		inode->i_notify_id = 0;
+/* end of init sequence for Reservoir Filesystems */
 	}
 	return inode;
 }

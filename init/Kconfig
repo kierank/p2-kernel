@@ -1,3 +1,6 @@
+# init/Kconfig
+# $Id: Kconfig 1290 2009-01-27 02:30:05Z isao $
+
 config ARCH
 	string
 	option env="ARCH"
@@ -69,7 +72,6 @@ config INIT_ENV_ARG_LIMIT
 	help
 	  Maximum of each of the number of arguments and environment
 	  variables passed to init from the kernel command line.
-
 
 config LOCALVERSION
 	string "Local version - append to kernel release"

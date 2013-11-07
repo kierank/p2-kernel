@@ -6,6 +6,7 @@
  *  Copyright (c) 2005 Michael Haboustak <mike-@cinci.rr.com> for Concept2, Inc
  *  Copyright (c) 2006-2007 Jiri Kosina
  */
+/* $Id: hid-core.c 11198 2010-12-15 23:33:40Z Noguchi Isao $ */
 
 /*
  * This program is free software; you can redistribute it and/or modify it
@@ -221,7 +222,8 @@ static void hid_irq_in(struct urb *urb)
 			hid_io_error(hid);
 			return;
 		default:		/* error */
-			warn("input irq status %d received", urb->status);
+/* 			warn("input irq status %d received", urb->status); */
+			dev_warn(&urb->dev->dev, "input irq status %d received", urb->status);
 	}
 
 	status = usb_submit_urb(urb, GFP_ATOMIC);
@@ -329,7 +331,8 @@ static void hid_irq_out(struct urb *urb)
 		case -ENOENT:
 			break;
 		default:		/* error */
-			warn("output irq status %d received", urb->status);
+/* 			warn("output irq status %d received", urb->status); */
+			dev_warn(&urb->dev->dev, "output irq status %d received", urb->status);
 	}
 
 	spin_lock_irqsave(&usbhid->outlock, flags);
@@ -381,7 +384,8 @@ static void hid_ctrl(struct urb *urb)
 		case -EPIPE:		/* report not available */
 			break;
 		default:		/* error */
-			warn("ctrl urb status %d received", urb->status);
+/* 			warn("ctrl urb status %d received", urb->status); */
+            dev_warn(&urb->dev->dev,"ctrl urb status %d received", urb->status);
 	}
 
 	if (unplug)
@@ -418,7 +422,8 @@ void usbhid_submit_report(struct hid_device *hid, struct hid_report *report, uns
 
 		if ((head = (usbhid->outhead + 1) & (HID_OUTPUT_FIFO_SIZE - 1)) == usbhid->outtail) {
 			spin_unlock_irqrestore(&usbhid->outlock, flags);
-			warn("output queue full");
+/* 			warn("output queue full"); */
+            dev_warn(hid->dev,"output queue full");
 			return;
 		}
 
@@ -437,7 +442,8 @@ void usbhid_submit_report(struct hid_device *hid, struct hid_report *report, uns
 
 	if ((head = (usbhid->ctrlhead + 1) & (HID_CONTROL_FIFO_SIZE - 1)) == usbhid->ctrltail) {
 		spin_unlock_irqrestore(&usbhid->ctrllock, flags);
-		warn("control queue full");
+/* 		warn("control queue full"); */
+        dev_warn(hid->dev,"control queue full");
 		return;
 	}
 
@@ -465,7 +471,8 @@ static int usb_hidinput_input_event(struct input_dev *dev, unsigned int type, un
 		return -1;
 
 	if ((offset = hidinput_find_field(hid, type, code, &field)) == -1) {
-		warn("event field not found");
+/* 		warn("event field not found"); */
+        dev_warn(&dev->dev,"event field not found");
 		return -1;
 	}
 
@@ -568,7 +575,8 @@ void usbhid_init_reports(struct hid_device *hid)
 	}
 
 	if (err)
-		warn("timeout initializing reports");
+/* 		warn("timeout initializing reports"); */
+        dev_warn(hid->dev,"timeout initializing reports");
 }
 
 /*
@@ -1000,6 +1008,57 @@ static int hid_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		return -ENODEV;
 	}
 
+
+/* 2010/12/15, added by Panasonic (SAV) ---> */
+#ifdef CONFIG_USB_HID_RESTRICT_ROUTING
+    {
+        int result=0;
+        struct usb_routing_restricion rr;
+        memset(&rr,0,sizeof(rr));
+
+#ifdef CONFIG_USB_HID_RESTRICT_WHEN_MEET
+        rr.met=1;
+#endif  /* CONFIG_USB_HID_RESTRICT_WHEN_MEET */
+
+#if CONFIG_USB_HID_RESTRICT_BUSNUM>0
+
+        rr.busnum = CONFIG_USB_HID_RESTRICT_BUSNUM;
+
+#if (CONFIG_USB_HID_RESTRICT_ROOTPORT>0) || (CONFIG_USB_HID_RESTRICT_SS_ROOTPORT>0)
+
+        rr.rootport = CONFIG_USB_HID_RESTRICT_ROOTPORT;
+        rr.ss_rootport = CONFIG_USB_HID_RESTRICT_SS_ROOTPORT;
+
+#if CONFIG_USB_HID_RESTRICT_ROUTE_STRING>0
+
+        rr.route = CONFIG_USB_HID_RESTRICT_ROUTE_STRING;
+
+#endif  /* CONFIG_USB_HID_RESTRICT_ROUTE_STRING>0 */
+
+#endif  /* (CONFIG_USB_HID_RESTRICT_ROOTPORT>0) || (CONFIG_USB_HID_RESTRICT_SS_ROOTPORT>0) */
+
+        result=usb_check_routing_restricion(interface_to_usbdev(intf),&rr);
+
+        if(result<0){
+            hid_disconnect(intf);
+            return result;
+        }
+
+        if(result){
+            pr_warning("WARNING: *** Ignore this HID device in order to restriction of routing\n");
+            hid_disconnect(intf);
+            return  -ENXIO;
+        }
+
+#endif  /* CONFIG_USB_HID_RESTRICT_BUSNUM>0 */
+
+    }
+#endif  /* CONFIG_USB_HID_RESTRICT_ROUTING */
+/* <--- 2010/12/15, added by Panasonic ---> */
+
+
+
+
 	if ((hid->claimed & HID_CLAIMED_INPUT))
 		hid_ff_init(hid);
 
@@ -1119,7 +1178,8 @@ static int __init hid_init(void)
 	retval = usb_register(&hid_driver);
 	if (retval)
 		goto usb_register_fail;
-	info(DRIVER_VERSION ":" DRIVER_DESC);
+/* 	info(DRIVER_VERSION ":" DRIVER_DESC); */
+	pr_info(KBUILD_MODNAME ":" DRIVER_VERSION ":" DRIVER_DESC);
 
 	return 0;
 usb_register_fail:

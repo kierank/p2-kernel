@@ -6,6 +6,7 @@
  *
  *	Copyright 1997 -- 2000 Martin Mares <mj@ucw.cz>
  */
+/* $Id: pci.c 11381 2010-12-23 22:37:43Z Noguchi Isao $ */
 
 #include <linux/kernel.h>
 #include <linux/delay.h>
@@ -27,8 +28,20 @@ unsigned int pci_pm_d3_delay = 10;
 int pci_domains_supported = 1;
 #endif
 
+/* 2010/12/21, modified by Panasonic (SAV) ---> */
+#ifdef CONFIG_CARDBUS_IO_SIZE
+#define DEFAULT_CARDBUS_IO_SIZE		CONFIG_CARDBUS_IO_SIZE
+#else  /* ! CONFIG_CARDBUS_IO_SIZE */
 #define DEFAULT_CARDBUS_IO_SIZE		(256)
+#endif  /* CONFIG_CARDBUS_IO_SIZE */
+
+#ifdef CONFIG_CARDBUS_MEM_SIZE
+#define DEFAULT_CARDBUS_MEM_SIZE	CONFIG_CARDBUS_MEM_SIZE
+#else  /* ! CONFIG_CARDBUS_MEM_SIZE */
 #define DEFAULT_CARDBUS_MEM_SIZE	(64*1024*1024)
+#endif  /* CONFIG_CARDBUS_MEM_SIZE */
+/* <--- 2010/12/21, modified by Panasonic (SAV) */
+
 /* pci=cbmemsize=nnM,cbiosize=nn can override this */
 unsigned long pci_cardbus_io_size = DEFAULT_CARDBUS_IO_SIZE;
 unsigned long pci_cardbus_mem_size = DEFAULT_CARDBUS_MEM_SIZE;

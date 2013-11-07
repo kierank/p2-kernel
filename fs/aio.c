@@ -1405,7 +1405,8 @@ static ssize_t aio_setup_vectored_rw(int type, struct kiocb *kiocb)
 {
 	ssize_t ret;
 
-	ret = rw_copy_check_uvector(type, (struct iovec __user *)kiocb->ki_buf,
+	/* Modified by Panasonic for RT */
+	ret = rw_copy_check_uvector(type, 0, (struct iovec __user *)kiocb->ki_buf,
 				    kiocb->ki_nbytes, 1,
 				    &kiocb->ki_inline_vec, &kiocb->ki_iovec);
 	if (ret < 0)

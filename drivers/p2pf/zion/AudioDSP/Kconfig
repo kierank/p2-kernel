@@ -1,0 +1,2 @@
+config ZION_AUDIODSP
+        bool "Support Audio DSP"

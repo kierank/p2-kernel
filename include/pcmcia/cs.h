@@ -387,6 +387,9 @@ int pcmcia_eject_card(struct pcmcia_socket *skt);
 int pcmcia_insert_card(struct pcmcia_socket *skt);
 int pccard_reset_card(struct pcmcia_socket *skt);
 
+unsigned int GET_PCMCIA_INSERT_EVENT_MUTE(void);
+void SET_PCMCIA_INSERT_EVENT_MUTE(unsigned int value);
+
 struct pcmcia_device * pcmcia_dev_present(struct pcmcia_device *p_dev);
 void pcmcia_disable_device(struct pcmcia_device *p_dev);
 

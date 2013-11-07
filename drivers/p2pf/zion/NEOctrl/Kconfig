@@ -1,0 +1,8 @@
+config ZION_NEOCTRL
+	bool "Support NEO Control"
+	default y
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+
+	  If unsure, say Y.

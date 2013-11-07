@@ -24,6 +24,12 @@ gianfar_driver-objs := gianfar.o \
 		gianfar_mii.o \
 		gianfar_sysfs.o
 
+# 2009/9/10, added by Panasonic >>>>
+ifeq ($(CONFIG_GIANFAR_EXTENTION_DSAS),y)
+gianfar_driver-objs += gianfar_dsas.o
+endif
+# <<<< 2009/9/10, added by Panasonic
+
 obj-$(CONFIG_UCC_GETH) += ucc_geth_driver.o
 ucc_geth_driver-objs := ucc_geth.o ucc_geth_mii.o ucc_geth_ethtool.o
 

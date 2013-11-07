@@ -35,6 +35,7 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* $Id: transport.h 12277 2011-02-08 07:31:06Z Noguchi Isao $ */
 
 #ifndef _TRANSPORT_H_
 #define _TRANSPORT_H_
@@ -89,6 +90,9 @@ struct bulk_cs_wrap {
 #define USB_STOR_XFER_STALLED	2	/* endpoint stalled              */
 #define USB_STOR_XFER_LONG	3	/* device tried to send too much */
 #define USB_STOR_XFER_ERROR	4	/* transfer died in the middle   */
+#define USB_STOR_XFER_TIMEOUT	5	/* transfer timeout		 */
+// 2011/2/4, added by panasonic (SAV)
+#define USB_STOR_XFER_FATAL     6   /* fatal error */
 
 /*
  * Transport return codes
@@ -98,6 +102,9 @@ struct bulk_cs_wrap {
 #define USB_STOR_TRANSPORT_FAILED  1   /* Transport good, command failed   */
 #define USB_STOR_TRANSPORT_NO_SENSE 2  /* Command failed, no auto-sense    */
 #define USB_STOR_TRANSPORT_ERROR   3   /* Transport bad (i.e. device dead) */
+/* 2011/2/2, modified by Panasonic (SAV) ---> */
+#define USB_STOR_TRANSPORT_RESET_RECOVERY   4 /* Transport bad ( need to perfom Reset Recovery) */
+/* <--- 2011/2/2, modified by Panasonic (SAV) */
 
 /*
  * We used to have USB_STOR_XFER_ABORTED and USB_STOR_TRANSPORT_ABORTED
@@ -135,6 +142,10 @@ extern int usb_stor_ctrl_transfer(struct us_data *us, unsigned int pipe,
 		void *data, u16 size);
 extern int usb_stor_bulk_transfer_buf(struct us_data *us, unsigned int pipe,
 		void *buf, unsigned int length, unsigned int *act_len);
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+extern int __usb_stor_bulk_transfer_buf(struct us_data *us, unsigned int pipe,
+		void *buf, unsigned int length, unsigned int *act_len, int timeout);
+/*------------------------------------------*/
 extern int usb_stor_bulk_transfer_sg(struct us_data *us, unsigned int pipe,
 		void *buf, unsigned int length, int use_sg, int *residual);
 extern int usb_stor_bulk_srb(struct us_data* us, unsigned int pipe,

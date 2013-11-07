@@ -158,6 +158,8 @@ EXPORT_SYMBOL(of_gpio_simple_xlate);
  * do all necessary work for you. Then you'll able to use .regs
  * to manage GPIOs from the callbacks.
  */
+/* $Id: gpio.c 5088 2010-02-09 02:49:16Z Sawada Koji $ */
+
 int of_mm_gpiochip_add(struct device_node *np,
 		       struct of_mm_gpio_chip *mm_gc)
 {
@@ -173,7 +175,10 @@ int of_mm_gpiochip_add(struct device_node *np,
 	if (!mm_gc->regs)
 		goto err1;
 
+    /* 2009/12/1, commented by Panasonic */
+#if 0
 	gc->base = -1;
+#endif  /* 0 */
 
 	if (!of_gc->xlate)
 		of_gc->xlate = of_gpio_simple_xlate;

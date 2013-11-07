@@ -1,3 +1,5 @@
+/* $Id: scsi_host.h 13959 2011-04-18 22:58:48Z Noguchi Isao $ */
+
 #ifndef _SCSI_SCSI_HOST_H
 #define _SCSI_SCSI_HOST_H
 
@@ -85,6 +87,17 @@ struct scsi_host_template {
 	 */
 	int (* ioctl)(struct scsi_device *dev, int cmd, void __user *arg);
 
+
+/* 2010/5/18, modified by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+    /*
+     * Get low-level device informations
+     *
+     * Status : OPTIONAL
+     */
+    int (* get_devinfo)(struct scsi_device *dev, void *devinfo);
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <== 2010/5/18, modified by Panasonic */
 
 #ifdef CONFIG_COMPAT
 	/* 
@@ -348,6 +361,22 @@ struct scsi_host_template {
 	 * Status: OPTIONAL
 	 */
 	enum scsi_eh_timer_return (* eh_timed_out)(struct scsi_cmnd *);
+
+/* 2011/4/14, added by Panasonic (PAVBU) --> */
+    /*
+     * This is an optional routine that recovery from the
+     * timeout-error instead default routine in scsi_unjam_host().
+     *
+	 * SUCCESS:		I fixed the error, please complete the command
+     *
+     * SCSI_RETURN_NOT_HANDLED: Begin normal error recovery
+     *
+     * others:   failed to fix the error
+     *
+	 * Status: OPTIONAL
+     */
+	int (* eh_unjam_host)(struct scsi_cmnd *);
+/* <-- 2011/4/14, added by Panasonic (PAVBU) */
 
 	/*
 	 * Name of proc directory

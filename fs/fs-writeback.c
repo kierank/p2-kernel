@@ -23,6 +23,7 @@
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 #include <linux/buffer_head.h>
+#include <linux/reservoir_fs.h> /* Added by Panasonic for RT */
 #include "internal.h"
 
 
@@ -286,7 +287,21 @@ __sync_single_inode(struct inode *inode, struct writeback_control *wbc)
 
 	/* Don't write the inode if only I_DIRTY_PAGES was set */
 	if (dirty & (I_DIRTY_SYNC | I_DIRTY_DATASYNC)) {
+/* Modified by Panasonic for RT control. ----> */
+#if defined(CONFIG_RTCTRL)
+		int err = 0;
+		dev_t dev = choose_rtctrl_dev(inode->i_sb->s_dev, inode->i_rdev);
+		
+		lock_rton( MAJOR(dev) );
+		if ( !current_is_pdflush()
+			 || (current_is_pdflush() && check_rt_status(inode->i_sb)) ) {
+			err = write_inode(inode, wait);
+		}
+		unlock_rton( MAJOR(dev) );
+#else /* ! CONFIG_RTCTRL */
 		int err = write_inode(inode, wait);
+#endif /* CONFIG_RTCTRL */
+/* <---- Modified by Panasonic for RT control. */
 		if (ret == 0)
 			ret = err;
 	}
@@ -376,7 +391,17 @@ static int
 __writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
 {
 	wait_queue_head_t *wqh;
+#if defined(CONFIG_RTCTRL) /* Added by Panasonic for RT control --> */
+	dev_t dev = choose_rtctrl_dev(inode->i_sb->s_dev, inode->i_rdev);
 
+	lock_rton( MAJOR(dev) );
+	if ( !inode_is_rt(inode) && is_rton4wait(dev) ) {
+		wbc->sync_mode = WB_SYNC_NONE;
+		wbc->nonblocking = 1;
+	}
+	unlock_rton( MAJOR(dev) );
+#endif /* CONFIG_RTCTRL */ /* <-- Added by Panasonic for RT control */
+	
 	if (!atomic_read(&inode->i_count))
 		WARN_ON(!(inode->i_state & (I_WILL_FREE|I_FREEING)));
 	else
@@ -708,6 +733,12 @@ int write_inode_now(struct inode *inode, int sync)
 	spin_lock(&inode_lock);
 	ret = __writeback_single_inode(inode, &wbc);
 	spin_unlock(&inode_lock);
+
+#if defined(CONFIG_RTCTRL) /* Added by Panasonic for RT control */
+	if ( wbc.sync_mode != WB_SYNC_ALL )
+		return ret;
+#endif /* CONFIG_RTCTRL */
+
 	if (sync)
 		inode_sync_wait(inode);
 	return ret;

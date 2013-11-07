@@ -13,6 +13,7 @@
  *	minor  cleanups.
  *	September 30, 2002 Mike Anderson (andmike@us.ibm.com)
  */
+/* $Id$ */
 
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -1558,6 +1559,43 @@ void scsi_eh_ready_devs(struct Scsi_Host *shost,
 }
 EXPORT_SYMBOL_GPL(scsi_eh_ready_devs);
 
+
+/* 2011/4/14, added by Panasonic (PAVBU) --> */
+
+/**
+ * scsi_eh_hostt_unjam - unjaming handler for hostt
+ * @work_q: &list_head for pending commands.
+ * @done_q:	&list_head for processed commands.
+ */
+static int scsi_eh_hostt_unjam(struct list_head *work_q,
+			      struct list_head *done_q)
+{
+	struct scsi_cmnd *scmd, *next;
+	int rtn;
+
+	list_for_each_entry_safe(scmd, next, work_q, eh_entry) {
+		if (!(scmd->eh_eflags & SCSI_EH_CANCEL_CMD))
+			continue;
+
+        if (!scmd->device->host->hostt->eh_unjam_host)
+            continue;
+
+		rtn = scmd->device->host->hostt->eh_unjam_host(scmd);
+        if (rtn == SCSI_RETURN_NOT_HANDLED)
+            continue;
+		if (rtn != SUCCESS)
+            SCSI_LOG_ERROR_RECOVERY(3, printk("%s: scmd %p rtn %x\n",
+                                          __func__, scmd, rtn));
+        scmd->eh_eflags &= ~SCSI_EH_CANCEL_CMD;
+        scsi_eh_finish_cmd(scmd, done_q);
+	}
+
+	return list_empty(work_q);
+}
+
+/* <-- 2011/4/14, added by Panasonic (PAVBU) */
+
+
 /**
  * scsi_eh_flush_done_q - finish processed commands or retry them.
  * @done_q:	list_head of processed commands.
@@ -1628,9 +1666,17 @@ static void scsi_unjam_host(struct Scsi_Host *shost)
 
 	SCSI_LOG_ERROR_RECOVERY(1, scsi_eh_prt_fail_stats(shost, &eh_work_q));
 
-	if (!scsi_eh_get_sense(&eh_work_q, &eh_done_q))
-		if (!scsi_eh_abort_cmds(&eh_work_q, &eh_done_q))
-			scsi_eh_ready_devs(shost, &eh_work_q, &eh_done_q);
+/* 2011/4/14, modified by Panasonic (PAVBU) --> */
+
+/* 	if (!scsi_eh_get_sense(&eh_work_q, &eh_done_q)) */
+/* 		if (!scsi_eh_abort_cmds(&eh_work_q, &eh_done_q)) */
+/* 			scsi_eh_ready_devs(shost, &eh_work_q, &eh_done_q); */
+	if (!scsi_eh_hostt_unjam(&eh_work_q, &eh_done_q))
+        if (!scsi_eh_get_sense(&eh_work_q, &eh_done_q))
+            if (!scsi_eh_abort_cmds(&eh_work_q, &eh_done_q))
+                scsi_eh_ready_devs(shost, &eh_work_q, &eh_done_q);
+
+/* <-- 2011/4/14, modified by Panasonic (PAVBU) */
 
 	scsi_eh_flush_done_q(&eh_done_q);
 }

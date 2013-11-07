@@ -16,6 +16,7 @@
 #include <linux/syscalls.h>
 #include <linux/pagemap.h>
 #include <linux/splice.h>
+#include <linux/reservoir_fs.h> /* Added by Panasonic for RT */
 #include "read_write.h"
 
 #include <asm/uaccess.h>
@@ -490,7 +491,8 @@ ssize_t do_loop_readv_writev(struct file *filp, struct iovec *iov,
 /* A write operation does a read from user space and vice versa */
 #define vrfy_dir(type) ((type) == READ ? VERIFY_WRITE : VERIFY_READ)
 
-ssize_t rw_copy_check_uvector(int type, const struct iovec __user * uvector,
+/* Modified by Panasonic for RT */
+ssize_t rw_copy_check_uvector(int type, int is_drct, const struct iovec __user * uvector,
 			      unsigned long nr_segs, unsigned long fast_segs,
 			      struct iovec *fast_pointer,
 			      struct iovec **ret_pointer)
@@ -546,7 +548,8 @@ ssize_t rw_copy_check_uvector(int type, const struct iovec __user * uvector,
 			ret = -EINVAL;
   			goto out;
 		}
-		if (unlikely(!access_ok(vrfy_dir(type), buf, len))) {
+		/* Modified by Panasonic for RT */
+		if (unlikely( (!is_drct) && (!access_ok(vrfy_dir(type), buf, len)) )) {
 			ret = -EFAULT;
   			goto out;
 		}
@@ -568,13 +571,15 @@ static ssize_t do_readv_writev(int type, struct file *file,
 	ssize_t ret;
 	io_fn_t fn;
 	iov_fn_t fnv;
-
+	int is_drct = (file->f_flags & O_PCIDRCT) ? 1 : 0; /* Added by Panasonic for RT */
+	
 	if (!file->f_op) {
 		ret = -EINVAL;
 		goto out;
 	}
 
-	ret = rw_copy_check_uvector(type, uvector, nr_segs,
+	/* Modified by Panasonic for RT */
+	ret = rw_copy_check_uvector(type, is_drct, uvector, nr_segs,
 			ARRAY_SIZE(iovstack), iovstack, &iov);
 	if (ret <= 0)
 		goto out;

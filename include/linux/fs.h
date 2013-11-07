@@ -292,6 +292,8 @@ extern int dir_notify_enable;
 #include <linux/capability.h>
 #include <linux/semaphore.h>
 
+#include <linux/reservoir_sb.h> /* Added by Panasonic for RT */
+
 #include <asm/atomic.h>
 #include <asm/byteorder.h>
 
@@ -574,6 +576,16 @@ struct block_device {
 	 * care to not mess up bd_private for that case.
 	 */
 	unsigned long		bd_private;
+/* P2PF TARGET DEPENDENT CODE (K277) -->	*/
+/* Modified by Panasonic : 2009/06/09		*/
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+	unsigned long	removal_detection;
+#endif
+/* <-- P2PF TARGET DEPENDENT CODE (K277)	*/
+
+  /* Added by Panasonic --> */
+	struct list_head	bd_dlist;
+  /* <-- Added by Panasonic */
 };
 
 /*
@@ -680,8 +692,26 @@ struct inode {
 #ifdef CONFIG_SECURITY
 	void			*i_security;
 #endif
+
+/* Added by Panasonic for Reservoir Filesystems (e.g. P2FAT) --> */
+	struct list_head i_reservoir_list; /* inode list in bio_reservoir */
+	struct bio_reservoir *i_reservoir; /* reservoir */
+	unsigned long i_rsrvr_flags;
+	unsigned long i_rsrvr_count;
+	unsigned long i_rsrvr_rt_count;
+	unsigned long i_rsrvr_drct_count;
+	unsigned long i_file_id;
+	unsigned long i_notify_id;
+/* <-- Added by Panasonic for Reservoir Filesystems (e.g. P2FAT) */
+
 	void			*i_private; /* fs or device private pointer */
 };
+
+/* Added by Panasonic for i_rsrvr_flags --> */
+enum _i_rsrvr_flags {RS_RT, RS_PCIDRCT, RS_SUSPENDED, RS_MI};
+#define inode_is_rt(inode)    (test_bit(RS_RT, &inode->i_rsrvr_flags))
+#define inode_is_drct(inode)  (test_bit(RS_DRCT, &inode->i_rsrvr_flags))
+/* <-- Added by Panasonic for i_rsrvr_flags */
 
 /*
  * inode->i_mutex nesting subclasses for the lock validator:
@@ -1117,6 +1147,9 @@ struct super_block {
 	   Cannot be worse than a second */
 	u32		   s_time_gran;
 
+	/* Added by Panasonic for Reservoir Filesystems (eg. P2FAT) */
+	struct reservoir_sb rsrvr_sb;
+	
 	/*
 	 * Filesystem subtype.  If non-empty the filesystem type field
 	 * in /proc/mounts will be "type.subtype"
@@ -1218,6 +1251,10 @@ struct block_device_operations {
 	int (*media_changed) (struct gendisk *);
 	int (*revalidate_disk) (struct gendisk *);
 	int (*getgeo)(struct block_device *, struct hd_geometry *);
+/* Added by Panasonic for driver's mount/umount method ----> */
+	int (*mount_fs) (struct inode *);
+	int (*umount_fs) (struct inode *);
+/* <---- Added by Panasonic for driver's mount/umount method */
 	struct module *owner;
 };
 
@@ -1291,7 +1328,8 @@ struct inode_operations {
 
 struct seq_file;
 
-ssize_t rw_copy_check_uvector(int type, const struct iovec __user * uvector,
+/* Modified by Panasonic for RT */
+ssize_t rw_copy_check_uvector(int type, int is_drct, const struct iovec __user * uvector,
 				unsigned long nr_segs, unsigned long fast_segs,
 				struct iovec *fast_pointer,
 				struct iovec **ret_pointer);
@@ -1643,6 +1681,12 @@ extern void bd_set_size(struct block_device *, loff_t size);
 extern void bd_forget(struct inode *inode);
 extern void bdput(struct block_device *);
 extern struct block_device *open_by_devnum(dev_t, unsigned);
+
+/* Added by Panasonic for open_request flag & DWM ----> */
+void blkdev_mount_fs(struct block_device *bdev);
+void blkdev_umount_fs(struct block_device *bdev);
+/* <---- Added by Panasonic for open_request flag & DWM */
+
 #else
 static inline void bd_forget(struct inode *inode) {}
 #endif
@@ -2152,6 +2196,42 @@ int proc_nr_files(struct ctl_table *table, int write, struct file *filp,
 		  void __user *buffer, size_t *lenp, loff_t *ppos);
 
 int get_filesystem_list(char * buf);
+
+/* Added by Panasonic for RT control and delayproc ----> */
+#if defined(CONFIG_RTCTRL)
+extern int check_rt_status( struct super_block *sb );
+extern int check_delay_status( struct super_block *sb );
+extern dev_t choose_rtctrl_dev(dev_t deva, dev_t devb );
+extern unsigned char is_rton( dev_t pdev, umode_t mode, int for_dp, int rt );
+extern unsigned char is_rton4wait( dev_t pdev );
+extern unsigned char chk_rton( unsigned int major );
+extern void set_rton( unsigned int major );
+extern void clr_rton( unsigned int major );
+extern void lock_rton( unsigned int major );
+extern void unlock_rton( unsigned int major );
+extern void init_rton_info( void );
+extern void clr_rton_info( void );
+#else /* ! CONFIG_RTCTRLDRV */
+# define check_rt_status(sb) (1) /* RT_OFF -> 1 */
+# define check_delay_status(sb) (1) /* RT_OFF(normal) -> 1 */
+# define lock_rton( major )
+# define unlock_rton( major )
+#endif /* CONFIG_RTCTRL */
+
+/* for DEBUG */
+/* # define FS_DEBUG_PRINT */
+# if defined(FS_DEBUG_PRINT)
+#  define PFSDBG( fmt, args... )	printk( KERN_INFO "(PID%d)" fmt, current->pid, ## args)
+# else
+#  define PFSDBG( fmt, args... )
+# endif /* FS_DEBUG_PRINT */
+/* # define FS_INODE_DEBUG_PRINT */
+# if defined(FS_INODE_DEBUG_PRINT)
+#  define PIDBG( fmt, args... )	printk( KERN_INFO "[inode] " fmt, ## args)
+# else
+#  define PIDBG( fmt, args... )
+# endif /* FS_DEBUG_PRINT */
+/* <---- Add by Panasonic for RT control and delayproc */
 
 #endif /* __KERNEL__ */
 #endif /* _LINUX_FS_H */

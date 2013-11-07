@@ -1,0 +1,136 @@
+＜ZIONドライバ DMAI/F(EDMA)部 API＞
+
+0. DMAIF部の役割
+
+ZIONドライバDMAIF部は、ユーザー空間のプログラムがDMAIFに関する割り込みを検出する手段を提供する。
+DMAIF部のマイナー番号は include/linux/zion.h にて ZION_DMAIF マクロで定義されている。
+
+ ZION_DMAIF_PORT_OFFSET+0 :  バッファ管理
+ ZION_DMAIF_PORT_OFFSET+1 :  DMA完了
+ ZION_DMAIF_PORT_OFFSET+2 :  Frame pulse
+ ZION_DMAIF_PORT_OFFSET+3 :  バッファ管理
+ ZION_DMAIF_PORT_OFFSET+4 :  DMA完了
+ ZION_DMAIF_PORT_OFFSET+5 :  Frame pulse
+ ZION_DMAIF_PORT_OFFSET+6 :  バッファ管理
+ ZION_DMAIF_PORT_OFFSET+7 :  DMA完了
+ ZION_DMAIF_PORT_OFFSET+8 :  Frame pulse
+
+# MBUS空間のレジスタを設定する手段は現在のところ提供していない。
+# レジスタ設定が必要な場合は、COMMON部を使っておこなうこと。
+# デフォルトでは、RECとPBのFRAME割り込みのみが有効となっている。
+
+# DMAIFでは、Master と Slaveによって、read と writeの意味合いが
+# わかりにくいので、注意が必要である。
+
+
+1. select(poll)を用いて割り込みを待つ
+
+Linuxのsystem callであるselect(poll)を使って割り込みを検出することができる。
+これは、3つの割り込み検出ポート全てについて有効である。
+select自体については、Linuxのman等を参考とすること。
+
+DMA完了をselectで待つ場合は、DMA実行をioctlのコマンド ZION_EDMA_IOC_RUN,
+DMA停止をioctlのコマンド ZION_EDMA_IOC_STOP で行うこと。
+
+
+・関数名:
+    ZION_EDMA_IOC_RUN
+・機　能:
+    DMA Runビットを立てて、DMA実行
+・引　数:
+    なし
+
+・関数名:
+    ZION_EDMA_IOC_STOP
+・機　能:
+    DMA Runビットを下げて、DMA停止
+・引　数:
+    なし
+
+・関数名:
+    ZION_EDMA_IOC_OPEN
+・機　能:
+    DMA Openビットを立てる&DMA方向を設定
+・引　数:
+    int iIoDir [in]: DMA方向(0: read, 1: write)
+
+・関数名:
+    ZION_EDMA_IOC_CLOSE
+・機　能:
+    DMA Openビットを下げる
+・引　数:
+    なし
+
+
+2. ioctlを用いて割り込みを待つ
+
+ioctlで、commnad名を ZION_EDMA_IOC_READ, ZION_EDMA_IOC_WRITE とすることで割り込みを検出することができる。
+Readを実行する場合は ZION_EDMA_IOC_READ, Writeを実行する場合は ZION_EDMA_IOC_WRITE を使用すること。
+
+・関数名:
+    ZION_EDMA_IOC_READ
+・機　能:
+    DMA Read実行。DMA完了割り込みがあがる、もしくはタイムアウト(1sec)の場合に処理が戻る。
+・引　数:
+    なし
+
+・関数名:
+    ZION_EDMA_IOC_WRITE
+・機　能:
+    DMA Write実行。DMA完了割り込みがあがる、もしくはタイムアウト(1sec)の場合に処理が戻る。
+・引　数:
+    なし
+
+
+3. 割り込み要因の確認をする
+
+ioctlで、selectもしくはioctlで発生を確認した割り込みの要因がなにであったかを確認することができる。
+また、新たな割り込み発生のない状態で再びioctlを呼び出しても、全ビット0の結果が返るのみである。
+※注意 この関数からステータスを読みだしている間に、割り込みが発生しても、そのステータスは読み取ることができない。
+
+・関数名:
+    ZION_EDMA_IOC_GET_BUFINTSTTS
+・機　能:
+    前回発生した割り込み要因を知る
+・引　数:
+    unsigned short *usStts [out]: 割り込みステータス
+
+     0: DMA Done interrupt
+     1: Sync frame pulse interrupt
+     2: 
+     3: 
+     4: Empty interrupt
+     5: Almost empty interrupt
+     6: Almost full interrupt
+     7: Full interrupt
+     8: Diff count interrupt
+     9: 
+    10: 
+    11: 
+    12: Underflow interrupt
+    13: 
+    14: 
+    15: Overflow interrupt
+
+
+4. ioctlを使ったDMA範囲の指定
+
+DMAによる転送を行う場合は、事前にDMA範囲の設定を行う必要がある。ZIONドライバDMAIF部は、これをioctlを用いて提供している。
+commandは以下の通りである。これは全てのポートについて実行可能。
+
+・関数名:
+    ZION_EDMA_IOC_SET_REGION
+    ZION_EDMA_IOC_GET_REGION
+・機　能:
+    DMAに使用するSDRAM領域の設定/読み込み
+・引　数:
+  struct zion_edma_region へのポインタ
+  struct zion_edma_region
+   {
+     int dma_ch;  /* 設定/読み込みするDMAチャンネル(0〜2) */
+     int num;     /* 設定/読み込みするBuffer番号(0〜3) */
+     unsigned long lower; /* SDRAMの下限アドレス */
+     unsigned long upper; /* SDRAMの上限アドレス */
+   };
+・備　考:
+    lower は 64KB単位、upper は DWORDアライメントでなければならない。

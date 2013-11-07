@@ -14,7 +14,7 @@ obj-y :=	open.o read_write.o file_table.o super.o \
 		stack.o
 
 ifeq ($(CONFIG_BLOCK),y)
-obj-y +=	buffer.o bio.o block_dev.o direct-io.o mpage.o ioprio.o
+obj-y +=	buffer.o bio.o block_dev.o direct-io.o mpage.o ioprio.o reservoir.o
 else
 obj-y +=	no-block.o
 endif
@@ -79,6 +79,8 @@ obj-$(CONFIG_HUGETLBFS)		+= hugetlbfs/
 obj-$(CONFIG_CODA_FS)		+= coda/
 obj-$(CONFIG_MINIX_FS)		+= minix/
 obj-$(CONFIG_FAT_FS)		+= fat/
+obj-$(CONFIG_P2FAT_FS)		+= p2fat/
+obj-$(CONFIG_SDFAT_FS)		+= sdfat/
 obj-$(CONFIG_MSDOS_FS)		+= msdos/
 obj-$(CONFIG_VFAT_FS)		+= vfat/
 obj-$(CONFIG_BFS_FS)		+= bfs/

@@ -1,6 +1,7 @@
 #
 # Makefile for some libs needed in the kernel.
 #
+## $Id: Makefile 13117 2011-03-10 04:38:15Z Noguchi Isao $
 
 ifdef CONFIG_FTRACE
 ORIG_CFLAGS := $(KBUILD_CFLAGS)
@@ -17,6 +18,9 @@ lib-$(CONFIG_MMU) += ioremap.o
 lib-$(CONFIG_SMP) += cpumask.o
 
 lib-y	+= kobject.o kref.o klist.o
+
+## 2011/3/10, added by Panasonic (SAV)
+lib-y += ringbuff.o
 
 obj-y += bcd.o div64.o sort.o parser.o halfmd4.o debug_locks.o random32.o \
 	 bust_spinlocks.o hexdump.o kasprintf.o bitmap.o scatterlist.o

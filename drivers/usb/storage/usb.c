@@ -44,6 +44,7 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* $Id: usb.c 10895 2010-12-05 23:18:33Z Noguchi Isao $ */
 
 #include <linux/sched.h>
 #include <linux/errno.h>
@@ -75,6 +76,11 @@
 #ifdef CONFIG_USB_STORAGE_SDDR55
 #include "sddr55.h"
 #endif
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+#ifdef CONFIG_USB_STORAGE_SM331
+#include "sm331.h"
+#endif
+/*------------------------------------------*/
 #ifdef CONFIG_USB_STORAGE_DPCM
 #include "dpcm.h"
 #endif
@@ -104,6 +110,12 @@
 #endif
 #include "sierra_ms.h"
 
+/* Modified by Panasonic (SAV), 2008-aug-04 */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+#include <scsi/sdc.h>
+#endif
+/* Modified by Panasonic (SAV), 2008-aug-04 */
+
 /* Some informational data */
 MODULE_AUTHOR("Matthew Dharm <mdharm-usb@one-eyed-alien.net>");
 MODULE_DESCRIPTION("USB Mass Storage driver for Linux");
@@ -113,6 +125,54 @@ static unsigned int delay_use = 5;
 module_param(delay_use, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(delay_use, "seconds to delay before using a new device");
 
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+static unsigned int av_slot_delay_use = 0;
+module_param(av_slot_delay_use, uint, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(av_slot_delay_use, "seconds to delay before using a new device");
+/*------------------------------------------*/
+
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+#ifdef CONFIG_USB_STORAGE_SM331
+int is_av_slot(struct usb_device *udev)
+{
+	u8 slot;
+
+	u8 slot_num = CONFIG_SM331_AV_SLOT_NUM;
+	u8 slot_offset = CONFIG_SM331_AV_SLOT_OFFSET;
+
+	if(!udev) return 0;
+
+	if(!udev->parent) return 0;
+
+#ifdef CONFIG_SM331_USE_HUB
+	if(!udev->parent->parent) return 0;
+#endif //CONFIG_SM331_USE_HUB
+
+	slot = udev->portnum;
+
+	//check current usb device
+	if((slot < slot_offset) || (slot >= (slot_num + slot_offset)))
+		return 0;
+
+#ifdef CONFIG_SM331_USE_HUB
+	//check parent usb device
+	if(udev->parent->portnum != 1)
+		return 0;
+
+	//check parent-parent usb device
+	if(udev->parent->parent->portnum != 0)
+		return 0;
+#else
+	//check parent usb device
+	if(udev->parent->portnum != 0)
+		return 0;
+#endif //CONFIG_SM331_USE_HUB
+
+	return 1;
+}
+EXPORT_SYMBOL(is_av_slot);
+#endif //CONFIG_USB_STORAGE_SM331
+/*------------------------------------------*/
 
 /*
  * The entries in this table correspond, line for line,
@@ -600,6 +660,17 @@ static int get_transport(struct us_data *us)
 		break;
 #endif
 
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+#ifdef CONFIG_USB_STORAGE_SM331
+	case US_PR_SM331:
+		us->transport_name = "SM331";
+		us->transport = sm331_transport;
+		us->transport_reset = usb_stor_sm331_reset;
+		us->max_lun = 0;
+		break;
+#endif
+/*------------------------------------------*/
+
 #ifdef CONFIG_USB_STORAGE_DPCM
 	case US_PR_DPCM_USB:
 		us->transport_name = "Control/Bulk-EUSB/SDDR09";
@@ -901,19 +972,33 @@ static void release_everything(struct us_data *us)
 static int usb_stor_scan_thread(void * __us)
 {
 	struct us_data *us = (struct us_data *)__us;
+	int delay;
 
 	printk(KERN_DEBUG
 		"usb-storage: device found at %d\n", us->pusb_dev->devnum);
 
 	set_freezable();
+
+/* Modified by Panasonic (SAV), 2009-sep-24 */
+#ifdef CONFIG_USB_STORAGE_SM331
+	if(is_av_slot(us->pusb_dev)){
+		delay = av_slot_delay_use;
+	}
+	else
+#endif //CONFIG_USB_STORAGE_SM331
+	{
+		delay = delay_use;
+	}
+
 	/* Wait for the timeout to expire or for a disconnect */
-	if (delay_use > 0) {
+	if (delay > 0) {
 		printk(KERN_DEBUG "usb-storage: waiting for device "
 				"to settle before scanning\n");
 		wait_event_freezable_timeout(us->delay_wait,
 				test_bit(US_FLIDX_DONT_SCAN, &us->dflags),
-				delay_use * HZ);
+				delay * HZ);
 	}
+/*------------------------------------------*/
 
 	/* If the device is still connected, perform the scanning */
 	if (!test_bit(US_FLIDX_DONT_SCAN, &us->dflags)) {
@@ -933,6 +1018,84 @@ static int usb_stor_scan_thread(void * __us)
 
 	complete_and_exit(&us->scanning_done, 0);
 }
+
+/* Add by Panasonic (SAV), 2008-aug-04 */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+static int get_device_topology_sub(struct usb_device *udev, int devnum,
+			int level, int index, struct sdc_topology_info *tinfo )
+{
+	int chix;
+	int retval;
+	int parent_devnum = 0;
+
+	if( udev->parent && udev->parent->devnum != -1 )
+		parent_devnum = udev->parent->devnum;
+
+	if( devnum == udev->devnum ){
+/* 2010/10/18, modified by Panasonic (SAV) ---> */
+/* 		tinfo->level = level; */
+/* 		tinfo->port = index; */
+		tinfo->level = udev->level;
+		tinfo->port = udev->vportnum-1;
+/* <--- 2010/10/18, modified by Panasonic (SAV) */
+		return 0;
+	}
+
+	/* Now look at all of this device's children.   */
+	/* Copy form ./driver/usb/core/device.c         */
+	for (chix = 0; chix < udev->maxchild; chix++) {
+		struct usb_device *childdev = udev->children[chix];
+		if ( childdev ) {
+			retval = get_device_topology_sub(udev->children[ chix ], devnum, level + 1, chix, tinfo );
+			if ( retval == 0 )
+				return retval; 
+		}
+	}
+	return -EINVAL;
+}
+
+int get_usb_device_info(struct Scsi_Host *host, struct sdc_usbp_info *usbp_info )
+{
+	struct us_data *us;
+	struct usb_device *udev;
+	struct usb_bus *bus;
+	struct sdc_topology_info tinfo;
+	int	ret = 0;
+
+	us = host_to_us(host);
+	udev = us->pusb_dev;
+	bus = udev->bus;
+
+	ret = get_device_topology_sub( bus->root_hub, udev->devnum, 0, 0, &tinfo );
+
+	usbp_info->topology_bus = us->pusb_dev->bus->busnum;
+	usbp_info->topology_level = tinfo.level;
+	usbp_info->topology_port = tinfo.port;
+	usbp_info->topology_devnum = us->pusb_dev->devnum;
+
+	usbp_info->usb_max_lun = us->max_lun;
+	usbp_info->subclass = us->subclass;
+	usbp_info->usb_vendor_id = le16_to_cpu((us->pusb_dev->descriptor).idVendor);
+	usbp_info->usb_product_id = le16_to_cpu((us->pusb_dev->descriptor).idProduct);
+
+	return ret;
+
+}
+EXPORT_SYMBOL_GPL(get_usb_device_info);
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* Add by Panasonic (SAV), 2008-aug-04 */
+
+/* Backporting from 2.6.33 kernel. 2010/10/06, modified by Panasonic (SAV) ---> */
+static unsigned int usb_stor_sg_tablesize(struct usb_interface *intf)
+{
+    struct usb_device *usb_dev = interface_to_usbdev(intf);
+
+    if (usb_dev->bus->sg_tablesize) {
+        return usb_dev->bus->sg_tablesize;
+    }
+    return SG_ALL;
+}
+/* <--- 2010/10/06, modified by Panasonic (SAV) */
 
 
 /* Probe to see if we can drive a newly-connected USB device */
@@ -964,6 +1127,7 @@ static int storage_probe(struct usb_interface *intf,
 	 * Allow 16-byte CDBs and thus > 2TB
 	 */
 	host->max_cmd_len = 16;
+    host->sg_tablesize = usb_stor_sg_tablesize(intf); /* Backporting from 2.6.33 kernel. 2010/10/06, modified by Panasonic (SAV) */
 	us = host_to_us(host);
 	memset(us, 0, sizeof(struct us_data));
 	mutex_init(&(us->dev_mutex));
@@ -987,6 +1151,52 @@ static int storage_probe(struct usb_interface *intf,
 	result = get_device_info(us, id);
 	if (result)
 		goto BadDevice;
+
+
+/* 2010/10/14, added by Panasonic (SAV) ---> */
+#ifdef CONFIG_USB_STORAGE_RESTRICT_ROUTING
+    {
+        struct usb_routing_restricion rr;
+        memset(&rr,0,sizeof(rr));
+
+#ifdef CONFIG_USB_STORAGE_RESTRICT_WHEN_MEET
+        rr.met=1;
+#endif  /* CONFIG_USB_STORAGE_RESTRICT_WHEN_MEET */
+
+#if CONFIG_USB_STORAGE_RESTRICT_BUSNUM>0
+
+        rr.busnum = CONFIG_USB_STORAGE_RESTRICT_BUSNUM;
+
+#if (CONFIG_USB_STORAGE_RESTRICT_ROOTPORT>0) || (CONFIG_USB_STORAGE_RESTRICT_SS_ROOTPORT>0)
+
+        rr.rootport = CONFIG_USB_STORAGE_RESTRICT_ROOTPORT;
+        rr.ss_rootport = CONFIG_USB_STORAGE_RESTRICT_SS_ROOTPORT;
+
+#if CONFIG_USB_STORAGE_RESTRICT_ROUTE_STRING>0
+
+        rr.route = CONFIG_USB_STORAGE_RESTRICT_ROUTE_STRING;
+
+#endif  /* CONFIG_USB_STORAGE_RESTRICT_ROUTE_STRING>0 */
+
+#endif  /* (CONFIG_USB_STORAGE_RESTRICT_ROOTPORT>0) || (CONFIG_USB_STORAGE_RESTRICT_SS_ROOTPORT>0) */
+
+        result=usb_check_routing_restricion(us->pusb_dev,&rr);
+
+        if(result<0)
+            goto BadDevice;
+
+        if(result){
+            pr_warning(USB_STORAGE
+                    "WARNING: *** Ignore this storage in order to restriction of routing\n");
+            result = -ENXIO;
+            goto BadDevice;
+        }
+
+#endif  /* CONFIG_USB_STORAGE_RESTRICT_BUSNUM>0 */
+
+    }
+#endif  /* CONFIG_USB_STORAGE_RESTRICT_ROUTING */
+/* <--- 2010/10/14, added by Panasonic ---> */
 
 	/* Get the transport, protocol, and pipe settings */
 	result = get_transport(us);

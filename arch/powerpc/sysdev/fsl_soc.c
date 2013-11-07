@@ -11,6 +11,7 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
+/* $Id: fsl_soc.c 13018 2011-03-07 03:10:17Z Noguchi Isao $ */
 
 #include <linux/stddef.h>
 #include <linux/kernel.h>
@@ -29,6 +30,9 @@
 #include <linux/fsl_devices.h>
 #include <linux/fs_enet_pd.h>
 #include <linux/fs_uart_pd.h>
+
+#include <linux/of_spi.h>       /* 2010/12/13, added by Panasonic */
+#include <linux/of_gpio.h>      /* 2009/12/7, added by Panasonic */
 
 #include <asm/system.h>
 #include <asm/atomic.h>
@@ -575,7 +579,13 @@ static int __init fsl_usb_of_init(void)
 				ret = PTR_ERR(usb_dev_dr_client);
 				goto err;
 			}
-		} else {
+ /* 2011.2.28, added by panasonic ---> */
+        } else if (prop && !strcmp(prop, "none")) {
+            pr_info("[%s] **** Property dr_mode is \"%s\". So ignore this device.\n",
+                    np->name, prop);
+            continue;
+/* <--- 2011.2.28, added by panasonic */
+ 		} else {
 			ret = -EINVAL;
 			goto err;
 		}
@@ -619,6 +629,118 @@ err:
 
 arch_initcall(fsl_usb_of_init);
 
+#if defined(CONFIG_83XXDMAC)
+static int __init fsl_dmac_of_init(void)
+{
+	struct device_node *np;
+	unsigned int i;
+	struct platform_device *dmac_dev;
+	int ret = 0;
+
+	static const char *dmac_regs = "regs";
+
+	for (np = NULL, i = 0;
+	     (np = of_find_compatible_node(np, "dma", "fsl-dma")) != NULL;
+	     i++) {
+ 		struct resource r[3];
+		//		int *id;
+		char *model;
+
+		memset(r, 0, sizeof(r));
+
+		ret = of_address_to_resource(np, 0, &r[0]);
+		printk("##### dmac:of_address_to_resource0 \n");
+		if (ret)
+			goto dmac_err;
+
+		r[0].name = dmac_regs;
+
+		r[1].start = r[1].end = irq_of_parse_and_map(np, 0);
+		printk("##### dmac:irq=%d\n",r[1].start);
+		r[1].flags = IORESOURCE_IRQ;
+
+		dmac_dev = platform_device_register_simple("dma:dma", i, &r[0], 2);
+
+		if (IS_ERR(dmac_dev)) {
+			ret = PTR_ERR(dmac_dev);
+			goto dmac_err;
+		}
+
+		model = (char*)of_get_property(np, "model", NULL);
+	}
+dmac_err:
+	return ret;
+}
+
+arch_initcall(fsl_dmac_of_init);
+#endif /* CONFIG_83XXDMAC */
+
+#if defined(CONFIG_P2IOPORT_MPC83XXGPIOINT)
+static int __init fsl_gpio_of_init(void)
+{
+	struct device_node *np;
+	unsigned int i;
+	struct platform_device *gpio_dev;
+	int ret = 0;
+
+	static const char *gpio_regs = "regs";
+
+	printk("##### gpio ###### \n");
+
+	for (np = NULL, i = 0;
+	     (np = of_find_compatible_node(np, "gpio", "fsl-gpio")) != NULL;i++) {
+ 		struct resource r[3];
+		char *model;
+
+		memset(r, 0, sizeof(r));
+
+		ret = of_address_to_resource(np, 0, &r[0]);
+		printk("##### gpio:of_address_to_resource0 \n");
+		if (ret)
+			goto gpio_err;
+
+		r[0].name = gpio_regs;
+
+		r[1].start = r[1].end = irq_of_parse_and_map(np, 0);
+		printk("##### gpio:irq=%d\n",r[1].start);
+		r[1].flags = IORESOURCE_IRQ;
+
+		gpio_dev = platform_device_register_simple("gpio:gpio", i, &r[0], 2);
+
+		if (IS_ERR(gpio_dev)) {
+			ret = PTR_ERR(gpio_dev);
+			goto gpio_err;
+		}
+
+		model = (char*)of_get_property(np, "model", NULL);
+	}
+gpio_err:
+	return ret;
+}
+
+arch_initcall(fsl_gpio_of_init);
+#endif /* CONFIG_P2IOPORT_MPC83XXGPIOINT */
+
+
+#ifdef CONFIG_SPI_MPC83xx
+
+/* 2009/12/7, added by Panasonic (SAV)
+   2010/12/13, modified by Panasonic (SAV) ---> */
+
+int __init fsl_spi_board_info(struct spi_board_info *board_infos,
+                              unsigned int num_board_infos) 
+{
+    int retval;
+    retval = of_spi_device_probe(NULL, "fsl,spi", board_infos, num_board_infos);
+    if(retval<=0)
+        retval = of_spi_device_probe("spi", "fsl-spi", board_infos, num_board_infos);
+    return retval;
+}
+
+/* <--- 2009/12/7, added by Panasonic (SAV)
+   2010/12/13, modified by Panasonic (SAV) */
+
+
 static int __init of_fsl_spi_probe(char *type, char *compatible, u32 sysclk,
 				   struct spi_board_info *board_infos,
 				   unsigned int num_board_infos,
@@ -652,13 +774,54 @@ static int __init of_fsl_spi_probe(char *type, char *compatible, u32 sysclk,
 		if (prop)
 			i = *(u32 *)prop;
 
-		prop = of_get_property(np, "mode", NULL);
-		if (prop && !strcmp(prop, "cpu-qe"))
-			pdata.qe_mode = 1;
+/* 2010/1/14, modified by Panasonic >>>> */
+#if 0  /* original */
+
+        prop = of_get_property(np, "mode", NULL);
+        if (prop && !strcmp(prop, "cpu-qe"))
+            pdata.qe_mode = 1;
+
+#else  /* Modified by panasonic */
+
+        if(of_device_is_compatible(np, "fsl,mpc837x-spi")
+           || of_device_is_compatible(np, "fsl,mpc831x-spi")){
+            /* All output pins are configured to open drain mode */
+            if(of_get_property(np, "open-drain", NULL))
+                pdata.od_mode = 1;
+        } else {
+            prop = of_get_property(np, "mode", NULL);
+            if (prop && !strcmp(prop, "cpu-qe"))
+                pdata.qe_mode = 1;
+        }
+
+#endif  /* 0 */
+/* <<<< 2010/1/14, modified by Panasonic */
+
 
 		for (j = 0; j < num_board_infos; j++) {
+            /* 2009/12/7,2010/1/8, modified by Panasonic >>>> */
+#if 0  /* original */
 			if (board_infos[j].bus_num == pdata.bus_num)
 				pdata.max_chipselect++;
+#else  /* Modified by panasonic */
+			if (board_infos[j].bus_num == pdata.bus_num){
+                int index = board_infos[j].chip_select;
+                int gpio;
+                if(index>=sizeof(pdata.cs2gpio)){
+                    ret = -EINVAL;
+                    goto err;
+                }
+                gpio = of_get_gpio(np,index);
+                if(gpio>=0 && !gpio_is_valid_port(gpio)){
+                    pr_err("[spi-master.%d] *** ERROR: GPIO-%d is NOT avilable. :\"%s\"\n",
+                           i,gpio,np->full_name);
+                    goto err;
+                }
+                pdata.cs2gpio[index] = (gpio<0)?index:gpio;
+				pdata.max_chipselect++;
+            }
+#endif  /* 0 */
+            /* <<<< 2009/12/7,2010/1/8, modified by Panasonic */
 		}
 
 		if (!pdata.max_chipselect)
@@ -689,7 +852,11 @@ static int __init of_fsl_spi_probe(char *type, char *compatible, u32 sysclk,
 		if (ret)
 			goto unreg;
 
-		goto next;
+        /* 2009/12/7, added by Panasonic */
+        pr_info("[spi-master.%d] \"%s\": bus_num=0x%08x,max_chipselect=%d, od_mode=%d\n",
+                i,np->full_name,pdata.bus_num,pdata.max_chipselect,pdata.od_mode);
+
+ 		goto next;
 unreg:
 		platform_device_del(pdev);
 err:
@@ -727,6 +894,8 @@ int __init fsl_spi_init(struct spi_board_info *board_infos,
 
 	return spi_register_board_info(board_infos, num_board_infos);
 }
+
+#endif  /* CONFIG_SPI_MPC83xx */
 
 #if defined(CONFIG_PPC_85xx) || defined(CONFIG_PPC_86xx)
 static __be32 __iomem *rstcr;

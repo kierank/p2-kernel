@@ -10,6 +10,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
 */
+/* $Id: rtc-lib.c 5477 2010-03-02 10:26:19Z Noguchi Isao $ */
 
 #include <linux/module.h>
 #include <linux/rtc.h>
@@ -100,8 +101,12 @@ int rtc_valid_tm(struct rtc_time *tm)
 		|| tm->tm_mday > rtc_month_days(tm->tm_mon, tm->tm_year + 1900)
 		|| ((unsigned)tm->tm_hour) >= 24
 		|| ((unsigned)tm->tm_min) >= 60
-		|| ((unsigned)tm->tm_sec) >= 60)
+		|| ((unsigned)tm->tm_sec) >= 60){
+        pr_err("error: invalid rtc_time"
+               " tm_year=%d,tm_mon=%d,tm_mday=%d,tm_hour=%d,tm_min=%d,tm_sec=%d\n",
+               tm->tm_year,tm->tm_mon,tm->tm_mday,tm->tm_hour,tm->tm_min,tm->tm_sec);
 		return -EINVAL;
+    }
 
 	return 0;
 }

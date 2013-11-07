@@ -1481,6 +1481,12 @@ extern cputime_t task_utime(struct task_struct *p);
 extern cputime_t task_stime(struct task_struct *p);
 extern cputime_t task_gtime(struct task_struct *p);
 
+#if defined(CONFIG_DELAYPROC)
+# define PF_DELAYPROC   0x00000080  /* delayprocd  Added by Panasonic */
+#else /* ! CONFIG_DELAYPROC */
+# define PF_DELAYPROC   0
+#endif /* CONFIG_DELAYPROC */
+
 /*
  * Per process flags
  */

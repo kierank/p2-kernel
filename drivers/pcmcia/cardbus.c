@@ -213,8 +213,11 @@ int __ref cb_alloc(struct pcmcia_socket * s)
 	struct pci_dev *dev;
 	unsigned int max, pass;
 
+/* Added by Panasonic ---> */
+	u16 vendor_id,device_id;
+/* <--- Added by Panasonic */
 	s->functions = pci_scan_slot(bus, PCI_DEVFN(0, 0));
-//	pcibios_fixup_bus(bus);
+	/* pcibios_fixup_bus(bus); */
 
 	max = bus->secondary;
 	for (pass = 0; pass < 2; pass++)
@@ -235,9 +238,18 @@ int __ref cb_alloc(struct pcmcia_socket * s)
 		s->tune_bridge(s, bus);
 
 	pci_enable_bridges(bus);
-	pci_bus_add_devices(bus);
-
-	s->irq.AssignedIRQ = s->pci_irq;
+/* Added by Panasonic ---> */
+	pci_bus_read_config_word(bus,PCI_DEVFN(0, 0),PCI_VENDOR_ID,&vendor_id);
+	pci_bus_read_config_word(bus,PCI_DEVFN(0, 0),PCI_DEVICE_ID,&device_id);
+	printk("vendor_id = 0x%x  device_id=0x%x\n",vendor_id,device_id);
+	if( (vendor_id==0x10f7 && device_id==0x8206) ||
+	    (vendor_id==0x10f7 && device_id==0x820e) ){
+	  pci_bus_add_devices(bus);
+	  s->irq.AssignedIRQ = s->pci_irq;
+	}else{
+	  printk("unsupported card found!\n");
+	}
+/* <--- Added by Panasonic */
 	return CS_SUCCESS;
 }
 

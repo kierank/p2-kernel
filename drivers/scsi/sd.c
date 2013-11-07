@@ -31,6 +31,7 @@
  *	Note: when the logging level is set by the user, it must be greater
  *	than the level indicated above to trigger output.	
  */
+/* $Id: sd.c 13969 2011-04-19 03:45:56Z Noguchi Isao $ */
 
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -49,6 +50,12 @@
 #include <linux/mutex.h>
 #include <asm/uaccess.h>
 
+/* 2010/5/17, added by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_PROC_FS
+#include <linux/seq_file.h>
+#endif  /* CONFIG_P2PF_SCSI_DISK_PROC_FS */
+/* <== 2010/5/17, added by Panasonic */
+
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_dbg.h>
@@ -58,6 +65,8 @@
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_ioctl.h>
 #include <scsi/scsicam.h>
+
+#include <scsi/sg.h>            /* 2010/10/01, added by Panasonic(SAV) */
 
 #include "sd.h"
 #include "scsi_logging.h"
@@ -86,6 +95,53 @@ MODULE_ALIAS_SCSI_DEVICE(TYPE_DISK);
 MODULE_ALIAS_SCSI_DEVICE(TYPE_MOD);
 MODULE_ALIAS_SCSI_DEVICE(TYPE_RBC);
 
+/* Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+#include <linux/string.h>
+#include <linux/poll.h>
+#include <linux/kthread.h>
+#include <linux/cdev.h>
+#include <linux/list.h>
+#include <linux/spinlock.h>
+#include <linux/semaphore.h>
+#include <linux/wait.h>
+#include <scsi/sdc.h>
+
+/* 2010/4/8-13, added by Panasonic */
+#ifdef CONFIG_P2PF_SCSI_DISK_BLK_ERROR
+#include <linux/reiserfs_fs.h>
+#include "scsi_priv.h"
+#endif  /* CONFIG_P2PF_SCSI_DISK_BLK_ERROR */
+
+static struct cdev sdc_dev;
+
+static DEFINE_SPINLOCK(sdc_plug_status_lock);
+int	usb_numof_device = 0;		/* Total number of currently connected disks */
+int	usb_numof_device_total = 0;	/* Total number of connected disks after power
+								on reset    */
+int	usb_plug_event = 0;			/* The event of insertion or remobal        */
+int	ata_numof_device = 0;		/* Total number of currently connected disks */
+int ata_numof_device_total = 0;	/* Total number of connected disks after power
+								on reset    */
+int	ata_plug_event = 0;			/* The event of insertion or remobal        */
+
+int	plug_event_poll_usb = SDC_PLUG_NO_EVENT;	/* Clear insertion & removal event	*/
+int plug_event_poll_sata0 = SDC_PLUG_NO_EVENT;	/* Clear insertion & removal event for SATA port 0 */
+int plug_event_poll_sata1 = SDC_PLUG_NO_EVENT;	/* Clear insertion & removal event for SATA port 1 */
+wait_queue_head_t sdc_poll_wait_queue;
+
+LIST_HEAD(sdc_list_head);
+static spinlock_t sdc_list_lock = SPIN_LOCK_UNLOCKED;
+
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 ---> */
+
+/* Modified by Panasonic (SAV), 2009-sep-25 */
+static int  sd_mount_fs(struct inode *);
+static int  sd_umount_fs(struct inode *);
+/*------------------------------------------*/
 static int  sd_revalidate_disk(struct gendisk *);
 static int  sd_probe(struct device *);
 static int  sd_remove(struct device *);
@@ -314,6 +370,26 @@ static int sd_major(int major_idx)
 	}
 }
 
+static const char *sd_disk_name(const u32 index, char * const buff, uint size)
+{
+    memset(buff,0,size);
+
+	if (index < 26) {
+		snprintf(buff, size, "sd%c", 'a' + index % 26);
+	} else if (index < (26 + 1) * 26) {
+		snprintf(buff, size, "sd%c%c",
+			'a' + index / 26 - 1,'a' + index % 26);
+	} else {
+		const unsigned int m1 = (index / 26 - 1) / 26 - 1;
+		const unsigned int m2 = (index / 26 - 1) % 26;
+		const unsigned int m3 =  index % 26;
+		snprintf(buff, size, "sd%c%c%c",
+			'a' + m1, 'a' + m2, 'a' + m3);
+	}
+
+    return buff;
+} 
+
 static struct scsi_disk *__scsi_disk_get(struct gendisk *disk)
 {
 	struct scsi_disk *sdkp = NULL;
@@ -359,6 +435,60 @@ static void scsi_disk_put(struct scsi_disk *sdkp)
 	scsi_device_put(sdev);
 	mutex_unlock(&sd_ref_mutex);
 }
+
+
+/* Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+static struct scsi_disk_char *get_sdc(struct scsi_disk_char *sdcp)
+{
+	struct scsi_disk *sdkp;
+
+	mutex_lock(&sd_ref_mutex);
+	sdkp = sdc_to_sdsk(sdcp);
+	if (sdkp)
+		sdkp = __scsi_disk_get(sdkp->disk);
+    sdcp = sdsk_to_sdc(sdkp);
+	mutex_unlock(&sd_ref_mutex);
+	return sdcp;
+}
+
+static struct scsi_disk_char *find_sdc_list_entry_by_dletter( char *drive_letter );
+
+static struct scsi_disk_char *get_sdc_by_dletter(char *dl)
+{
+    struct scsi_disk_char *sdcp;
+	struct scsi_disk *sdkp=NULL;
+
+	mutex_lock(&sd_ref_mutex);
+    sdcp = find_sdc_list_entry_by_dletter(dl);
+    if (sdcp) {
+        sdkp = sdc_to_sdsk(sdcp);
+        if (sdkp)
+            sdkp = __scsi_disk_get(sdkp->disk);
+    }
+    sdcp = sdsk_to_sdc(sdkp);
+	mutex_unlock(&sd_ref_mutex);
+	return sdcp;
+}
+
+static void put_sdc(struct scsi_disk_char *sdcp)
+{
+    struct scsi_disk *sdkp = sdc_to_sdsk(sdcp);
+	struct scsi_device *sdev = sdkp->device;
+
+	mutex_lock(&sd_ref_mutex);
+	put_device(&sdkp->dev);
+	scsi_device_put(sdev);
+	mutex_unlock(&sd_ref_mutex);
+}
+
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 */
+
+
 
 /**
  *	sd_init_command - build a scsi (read or write) command from
@@ -764,13 +894,13 @@ static int sd_ioctl(struct inode * inode, struct file * filp,
 	 * resolved.
 	 */
 	switch (cmd) {
-		case SCSI_IOCTL_GET_IDLUN:
-		case SCSI_IOCTL_GET_BUS_NUMBER:
-			return scsi_ioctl(sdp, cmd, p);
-		default:
-			error = scsi_cmd_ioctl(filp, disk->queue, disk, cmd, p);
-			if (error != -ENOTTY)
-				return error;
+    case SCSI_IOCTL_GET_IDLUN:
+    case SCSI_IOCTL_GET_BUS_NUMBER:
+        return scsi_ioctl(sdp, cmd, p);
+    default:
+        error = scsi_cmd_ioctl(filp, disk->queue, disk, cmd, p);
+        if (error != -ENOTTY)
+            return error;
 	}
 	return scsi_ioctl(sdp, cmd, p);
 }
@@ -850,6 +980,7 @@ static int sd_media_changed(struct gendisk *disk)
 	 * of a disk in the drive. This is kept in the struct scsi_disk
 	 * struct and tested at open !  Daniel Roche (dan@lectra.fr)
 	 */
+
 	sdkp->media_present = 1;
 
 	retval = sdp->changed;
@@ -962,6 +1093,10 @@ static struct block_device_operations sd_fops = {
 #endif
 	.media_changed		= sd_media_changed,
 	.revalidate_disk	= sd_revalidate_disk,
+/* Modified by Panasonic (SAV), 2009-sep-25 */
+	.mount_fs		= sd_mount_fs,
+	.umount_fs		= sd_umount_fs,
+/*------------------------------------------*/
 };
 
 static unsigned int sd_completed_bytes(struct scsi_cmnd *scmd)
@@ -1005,6 +1140,1521 @@ static unsigned int sd_completed_bytes(struct scsi_cmnd *scmd)
 	 */
 	return (bad_lba - start_lba) * scmd->device->sector_size;
 }
+
+/* Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+ #ifndef CONFIG_USB_STORAGE
+ /* Implements proxy function	*/ 
+ int get_usb_device_info( struct Scsi_Host *host, struct sdc_usbp_info *usbp_info )
+ {
+	memset( host, 0, sizeof(struct Scsi_Host) );
+	memset( usbp_info, 0, sizeof(struct sdc_usbp_info) );
+	return 0;
+ }
+ #endif  /* CONFIG_USB_STORAGE */
+
+/* Function for handling internal device list	*/
+
+static int add_sdc_list_entry( struct scsi_disk_char * new )
+{
+    int retval = 0;
+    unsigned long flags;
+
+    if (unlikely(!new)) {
+        retval = -EINVAL;
+        goto fail;
+    }
+
+    spin_lock_irqsave(&sdc_list_lock, flags);
+    list_add_tail(&new->list, &sdc_list_head);
+    spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+ fail:
+
+	return retval;
+}
+
+static void remove_sdc_list_entry( struct scsi_disk_char *sdc_pl )
+{
+    unsigned long flags;
+    spin_lock_irqsave(&sdc_list_lock, flags);
+    list_del (&sdc_pl->list);
+    spin_unlock_irqrestore(&sdc_list_lock, flags);
+}
+
+static struct scsi_disk_char *find_sdc_list_entry_by_hostid( int host_id, int id_flag )
+{
+	struct scsi_disk_char *sdc_pl=NULL;
+    struct list_head *ptr;
+    unsigned long flags;
+
+    spin_lock_irqsave(&sdc_list_lock, flags);
+
+    list_for_each(ptr, &sdc_list_head) {
+        struct scsi_disk_char *pl
+            = list_entry(ptr, struct scsi_disk_char, list);
+        /* We don't care "id_flag" parameter, 2008-SEP-16    */	
+		if( host_id == pl->host_no ){
+            sdc_pl = pl;
+            break;
+        }
+    }
+
+    spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+	return sdc_pl;
+}
+
+static struct scsi_disk_char *find_sdc_list_entry_by_dletter( char *drive_letter )
+{
+	struct scsi_disk_char *sdc_pl=NULL;
+    struct list_head *ptr;
+    unsigned long flags;
+
+    spin_lock_irqsave(&sdc_list_lock, flags);
+
+    list_for_each(ptr, &sdc_list_head) {
+        struct scsi_disk_char *pl
+            = list_entry(ptr, struct scsi_disk_char, list);
+        /* Find-out a list entry for specified drive letter	*/
+		if( !strcmp( sdc_dletter(pl), drive_letter) ){
+            sdc_pl = pl;
+            break;
+        }
+    }
+
+    spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+	return sdc_pl;
+}
+
+/*
+ * check specified entry is no more available
+ */
+static int check_sdc_list_entry(struct scsi_disk_char *sdc_pl_to_check)
+{
+    int retval = 0;
+    struct scsi_disk_char *sdc_pl=NULL;
+    struct list_head *ptr;
+    unsigned long flags;
+
+    if (unlikely(!sdc_pl_to_check)) {
+        retval = -EINVAL;
+        goto fail;
+    }
+
+    spin_lock_irqsave(&sdc_list_lock, flags);
+
+    list_for_each(ptr, &sdc_list_head) {
+        struct scsi_disk_char *pl
+            = list_entry(ptr, struct scsi_disk_char, list);
+		if( pl == sdc_pl_to_check ) {
+			sdc_pl = pl;
+            break;
+		}
+    }
+
+    spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+    if(!sdc_pl){
+        retval = -ENODEV;
+        goto fail;
+    }
+
+ fail:
+    return retval;
+}
+
+/*	Function for detecting USB & eSATA device insertion and removal,*/
+/*	also managing (add & delete) internal device list				*/
+/*  return 0        : success
+ *		   non-0    : error
+ */
+/* Modified : 2009/07/23, 2010/8/24									*/
+static int sdc_add( struct device *dev )
+{
+    int retval = 0;
+    struct scsi_device *sdp = to_scsi_device(dev);
+	struct scsi_disk *sdkp = dev_get_drvdata(dev);
+    struct scsi_disk_char *sdc_pl = sdsk_to_sdc(sdkp);
+    unsigned long flags;
+
+    /* zero clear */
+    memset(sdc_pl,0,sizeof(struct scsi_disk_char));
+
+    /* get host type */
+    if (!sdp->host->hostt->ioctl){
+        sd_printk(KERN_ERR, sdkp, 
+                    "*** ERROR: %s(%d) : NOT found ioctl of hosttemplate\n",
+                  __FUNCTION__, __LINE__);
+        retval = -ENODATA;        /* error */
+        goto fail;
+    }
+    sdc_pl->hosttype = sdp->host->hostt->ioctl(sdp,SCSI_IOCTL_GET_HOSTTYPE,NULL);
+    if (sdc_pl->hosttype<0) {
+        sd_printk(KERN_ERR, sdkp, 
+                    "*** ERROR: %s(%d) : ioctl(SCSI_IOCTL_GET_HOSTTYPE) is NOT supported\n",
+                  __FUNCTION__, __LINE__);
+        retval=sdc_pl->hosttype;
+        goto fail;
+    } else {
+        sd_printk(KERN_DEBUG, sdkp,
+                  "%s(%d) : hosttype=%d\n",
+                  __FUNCTION__,__LINE__,sdc_pl->hosttype);
+    }
+    retval = sdp->host->hostt->ioctl(sdp, SCSI_IOCTL_GET_DEVINFO, &sdc_pl->devinfo);
+    if (retval) {
+        sd_printk(KERN_ERR, sdkp, 
+                    "*** ERROR: %s(%d) : ioctl(SCSI_IOCTL_GET_DEVINFO) is NOT supported\n",
+                  __FUNCTION__, __LINE__);
+        goto fail;
+    }
+
+    switch(sdc_pl->hosttype) {
+
+    case SCSI_HOSTTYPE_SATA:    /* SATA host */
+        {
+            struct scsi_ioctl_ata_info *ata_info = &sdc_pl->devinfo.a;
+
+            /* add device list for SCSI Disk character driver */
+            {
+                int r=0;
+
+                sdc_pl->host_no = sdp->host->host_no;    /* Copy of sdv_dev_info.host_no     */
+                sdc_pl->dev_id = ( sdp->id & 0xFF ) + (( sdp->lun & 0xFF ) << 8 ) +
+                    (( sdp->channel & 0xFF ) << 16 ) + (( sdp->host->host_no & 0xFF ) << 24 );
+                
+                {
+                    struct sdc_dev_info *dinfo = &sdc_pl->sdc_dinfo;
+                    dinfo->host_no = sdp->host->host_no;
+                    dinfo->max_lun = 0;	/* Tentative			*/
+                    dinfo->vendor_id =  (unsigned short)0x0000;
+                    dinfo->product_id = (unsigned short)0x0000;
+                    strncpy(dinfo->vendor, sdp->vendor, 8);
+                    strncpy(dinfo->product, sdp->model, 16);
+                    strncpy(dinfo->serial, sdp->rev, 4);
+                }
+                
+                {
+                    sdc_pl->trans_state = DIRECT_TRANS_IDLE;
+                    spin_lock_init( &sdc_pl->lock );
+                    init_MUTEX( &sdc_pl->sema );
+                    init_waitqueue_head( &sdc_pl->wait_queue );
+                }
+
+                INIT_LIST_HEAD(&sdc_pl->list);
+                r=add_sdc_list_entry( sdc_pl );
+                if(r<0) {
+                    retval = r;
+                    goto fail;
+                }
+
+                sdc_printk(KERN_DEBUG, sdc_pl,
+                           "%s(%d) : added scsi disk character device to list\n",
+                           __FUNCTION__, __LINE__);
+            }
+
+
+            spin_lock_irqsave(&sdc_plug_status_lock,flags);
+
+            ata_numof_device++;
+            ata_numof_device_total++;
+            if(!ata_plug_event)
+                ata_plug_event++;
+
+            switch ( (ata_info->print_id - 1) ) {
+            case 0:
+                plug_event_poll_sata0 = SDC_PLUG_EVENT_SATA_IN;
+                break;
+            case 1:
+                plug_event_poll_sata1 = SDC_PLUG_EVENT_SATA_IN;
+                break;
+            }
+
+            spin_unlock_irqrestore(&sdc_plug_status_lock, flags);
+
+            sdc_printk(KERN_DEBUG, sdc_pl,
+                       "%s(%d) : SUCCESS : added scsi disk character device (ATA%d)\n",
+                       __FUNCTION__, __LINE__, ata_info->print_id-1);
+
+            wake_up( &sdc_poll_wait_queue );
+        }
+
+        break;
+
+    case SCSI_HOSTTYPE_USB:     /* USB host */
+
+        /* add device list for SCSI Disk character driver */
+        {
+            int r=0;
+
+            sdc_pl->host_no = sdp->host->host_no;    /* Copy of sdv_dev_info.host_no     */
+            sdc_pl->dev_id = ( sdp->id & 0xFF ) + (( sdp->lun & 0xFF ) << 8 ) +
+                (( sdp->channel & 0xFF ) << 16 ) + (( sdp->host->host_no & 0xFF ) << 24 );
+            
+            {
+                struct sdc_usbp_info usb_pinfo;
+                struct sdc_dev_info *dinfo = &sdc_pl->sdc_dinfo;
+
+                dinfo->host_no = sdp->host->host_no;
+                get_usb_device_info(sdp->host, &usb_pinfo);
+                dinfo->max_lun = usb_pinfo.usb_max_lun;
+                dinfo->vendor_id =  usb_pinfo.usb_vendor_id;
+                dinfo->product_id = usb_pinfo.usb_product_id;
+                strncpy(dinfo->vendor, sdp->vendor, 8);
+                strncpy(dinfo->product, sdp->model, 16);
+                strncpy(dinfo->serial, sdp->rev, 4);
+                dinfo->subclass = usb_pinfo.subclass;
+                dinfo->t_bus = usb_pinfo.topology_bus;
+                dinfo->t_level = usb_pinfo.topology_level;
+                dinfo->t_port = usb_pinfo.topology_port;
+                dinfo->t_devno = usb_pinfo.topology_devnum;
+
+                /* Inhibit creating list_entry if the drive is P2Store #1	*/
+                /* Modified : 2009/07/23									*/
+                if( dinfo->vendor_id == 0x04DA && dinfo->product_id == 0x2805 ){
+                    if( ( dinfo->max_lun == 1 ) && ( sdp->lun == 0 ) ){
+                        sdc_printk(KERN_NOTICE, sdc_pl,
+                                   "%s(%d) : **** P2STORE : lun = 0 was Ignored.\n",
+                                   __FUNCTION__, __LINE__);
+                        retval = 0;
+                        goto fail;
+                    }
+                }
+
+            }
+
+            {
+                sdc_pl->trans_state = DIRECT_TRANS_IDLE;
+                spin_lock_init( &sdc_pl->lock );
+                init_MUTEX( &sdc_pl->sema );
+                init_waitqueue_head( &sdc_pl->wait_queue );
+            }
+
+            INIT_LIST_HEAD(&sdc_pl->list);
+            r = add_sdc_list_entry( sdc_pl );
+            if(r<0) {
+                retval = r;
+                goto fail;
+            }
+            sdc_printk(KERN_DEBUG, sdc_pl,
+                       "%s(%d) : added scsi disk character device to list\n",
+                       __FUNCTION__, __LINE__);
+
+        }
+
+        /* add internal vals for SCSI Disk character driver */
+        spin_lock(&sdc_plug_status_lock);
+        usb_numof_device++;
+        usb_numof_device_total++;
+        if(!usb_plug_event)
+            usb_plug_event++;
+
+        plug_event_poll_usb = SDC_PLUG_EVENT_USB_IN;
+
+        spin_unlock(&sdc_plug_status_lock);
+
+        sdc_printk(KERN_DEBUG, sdc_pl,
+                   "%s(%d) : SUCCESS : added scsi disk character device (USB)\n",
+                   __FUNCTION__, __LINE__);
+
+        wake_up( &sdc_poll_wait_queue );
+        
+        break;
+
+    default:                    /* UNKNOWN host */
+        sdev_printk(KERN_ERR, sdp,
+                    "*** ERROR: %s(%d) unknown host type = %d\n", 
+                    __FUNCTION__, __LINE__, sdc_pl->hosttype);
+        retval = -ENODEV;       /* error */
+        goto fail;
+    }
+
+ fail:
+
+    /* complete */
+	return retval;
+}
+
+/*
+ *  return  0     : success
+ *          non-0 : error
+ */
+/* Modified : 2009/07/23, 2010/8/24						*/
+static int sdc_remove( struct device *dev )
+{
+    int retval = 0;
+    struct scsi_disk_char *sdc_pl = sdsk_to_sdc(dev_get_drvdata(dev));
+    unsigned long flags;
+
+    if (check_sdc_list_entry(sdc_pl)) {
+        sdc_printk(KERN_CONT, sdc_pl,
+                   "%s(%d) : Entry list is not found  --> Exit\n", __FUNCTION__, __LINE__);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+    {
+        /* remove device list for SCSI Disk character driver */
+        remove_sdc_list_entry(sdc_pl);
+        sdc_printk(KERN_DEBUG, sdc_pl,
+                   "%s(%d) : removed scsi disk character device from list\n",
+                   __FUNCTION__, __LINE__);
+
+        /* Handling error before removing from list */
+        spin_lock_irqsave(&sdc_pl->lock, flags);
+        if( sdc_pl->trans_state == DIRECT_TRANS_BUSY ){
+            sdc_pl->trans_state = DIRECT_TRANS_ERROR;
+            sdc_printk(KERN_DEBUG, sdc_pl,
+                       "%s(%d) : aborted kthread of direct transfer forcely\n",
+                       __FUNCTION__, __LINE__);
+        }
+        spin_unlock_irqrestore(&sdc_pl->lock, flags);
+    }
+
+
+    switch (sdc_pl->hosttype) {
+
+    case SCSI_HOSTTYPE_SATA:      /* SATA host */
+        {
+            struct scsi_ioctl_ata_info *ata_info = &sdc_pl->devinfo.a;
+
+            spin_lock_irqsave(&sdc_plug_status_lock, flags);
+
+            ata_numof_device--;
+            if(!ata_plug_event)
+                ata_plug_event++;
+
+            switch ( (ata_info->print_id - 1) ) {
+            case 0:
+                plug_event_poll_sata0 = SDC_PLUG_EVENT_SATA_OUT;
+                break;
+            case 1:
+                plug_event_poll_sata1 = SDC_PLUG_EVENT_SATA_OUT;
+                break;
+            }
+
+            spin_unlock_irqrestore(&sdc_plug_status_lock, flags);
+
+            wake_up( &sdc_poll_wait_queue );
+
+        }
+        break;
+
+
+    case SCSI_HOSTTYPE_USB:     /* USB host */
+
+        spin_lock_irqsave(&sdc_plug_status_lock, flags);
+
+        usb_numof_device--;
+        if(!usb_plug_event)
+            usb_plug_event++;
+
+        plug_event_poll_usb = SDC_PLUG_EVENT_USB_OUT;
+
+        spin_unlock_irqrestore(&sdc_plug_status_lock, flags);
+
+        wake_up( &sdc_poll_wait_queue );
+        
+        break;
+
+    default:                    /* UNKNOWN host */
+        sdc_printk(KERN_ERR, sdc_pl,
+                   "*** ERROR: %s(%d) : unknown host type = %d\n",
+                   __FUNCTION__, __LINE__, sdc_pl->hosttype);
+        retval = -ENODEV;        /* error */
+        goto fail;
+    }
+
+ fail:
+	return retval;
+}
+
+void sdc_fillup_dev_info( struct scsi_disk_char *sdc_pl, struct sdc_dev_info *sdc_info )
+{
+	sdc_info->host_no = (sdc_pl->sdc_dinfo).host_no;
+	sdc_info->max_lun = (sdc_pl->sdc_dinfo).max_lun;
+	sdc_info->vendor_id = (sdc_pl->sdc_dinfo).vendor_id;
+	sdc_info->product_id = (sdc_pl->sdc_dinfo).product_id;
+	strncpy( sdc_info->vendor, (sdc_pl->sdc_dinfo).vendor, SDC_STRING_LEN );
+	strncpy( sdc_info->product, (sdc_pl->sdc_dinfo).product, SDC_STRING_LEN );
+	strncpy( sdc_info->serial, (sdc_pl->sdc_dinfo).serial, SDC_STRING_LEN );
+	sdc_info->subclass = (sdc_pl->sdc_dinfo).subclass;
+	sdc_info->t_bus = (sdc_pl->sdc_dinfo).t_bus;
+	sdc_info->t_level = (sdc_pl->sdc_dinfo).t_level;
+	sdc_info->t_port = (sdc_pl->sdc_dinfo).t_port;
+	sdc_info->t_devno = (sdc_pl->sdc_dinfo).t_devno;
+
+}
+
+
+/*  thread for the buffer transfer between memory & device        */
+/*  30/Jul/2008, Panasonic (SAV)                                    */
+static int sdcdev_thread_direct_transfer( void *sdc_pl_ )
+{
+	int retval = 0;
+
+	struct scsi_disk_char *sdc_pl = sdc_pl_;
+    struct sdcdev_ioc_req_direct_transfer * req = NULL;
+	struct scsi_device *sdev = NULL;
+    unsigned long flags;
+
+	unsigned int trans_len;
+	int	data_dir;
+	unsigned char scsi_cmd[ 10 ];
+
+	allow_signal(SIGINT);
+	allow_signal(SIGTERM);
+	allow_signal(SIGKILL);
+
+    if ( unlikely(!sdc_pl) ) {
+		pr_crit("*** CRITICAL: %s(%d) : invalid parameter sdc_pl is NULL\n", __FUNCTION__, __LINE__);
+        return -EINVAL;
+    }
+
+    req = &sdc_pl->req_transfer;
+
+    if ( check_sdc_list_entry(sdc_pl) ){
+		sdc_printk(KERN_CONT, sdc_pl,
+                   "%s(%d) : Entry list is not available  --> Exit\n", __FUNCTION__, __LINE__);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+	if( req->sectors != ( req->len / 512 ) ){
+		sdc_printk(KERN_ERR, sdc_pl,
+                   "*** ERROR: %s(%d) : invalid params: sectors=%d, length =%d\n",
+                   __FUNCTION__, __LINE__, req->sectors, req->len);
+		retval = -EINVAL;
+		goto fail;
+	}
+
+    sdev = sdc_to_sdev(sdc_pl);
+	if( unlikely(!sdev) ){
+        sdc_printk(KERN_ERR, sdc_pl,
+                   "*** ERROR: %s(%d) : SCSI Device c_%s is invalid (%p) \n",
+                   __FUNCTION__, __LINE__, sdc_dletter(sdc_pl), sdev);
+		retval =  -ENODEV;
+		goto fail;
+	}
+
+	if( !scsi_block_when_processing_errors(sdev)
+        || sdev->sdev_state == SDEV_CANCEL
+		|| sdev->sdev_state == SDEV_DEL ) {
+        sdc_printk(KERN_ERR, sdc_pl,
+                    "*** ERROR: %s(%d) : Device c_%s is not available (offline or under removal)\n",
+                    __FUNCTION__, __LINE__, sdc_dletter(sdc_pl));
+        retval = -ENODEV;
+        goto fail;
+	}
+
+	memset( scsi_cmd, 0, sizeof( scsi_cmd ) );
+	if( (sdc_pl->req_transfer).dir == 0 ){
+		scsi_cmd[0] = 0x28;
+		data_dir = DMA_FROM_DEVICE;
+	}else {
+		scsi_cmd[0] = 0x2A;
+		data_dir = DMA_TO_DEVICE;
+	}
+	scsi_cmd[1] = ( sdev->lun << 5 );
+
+	while( req->len ){
+		sdc_pl->result = 0;
+
+		scsi_cmd[2] = ( req->start >> 24 ) & 0xFF;
+		scsi_cmd[3] = ( req->start >> 16 ) & 0xFF;
+		scsi_cmd[4] = ( req->start >> 8 ) & 0xFF;
+		scsi_cmd[5] = req->start & 0xFF;
+
+		if( req->sectors >= MAX_TRANSFER_LIMITS ){
+			scsi_cmd[7] = ( MAX_TRANSFER_LIMITS >> 8 ) & 0xFF;
+			scsi_cmd[8] = MAX_TRANSFER_LIMITS & 0xFF;
+			trans_len = MAX_TRANSFER_LIMITS * 512;
+		}else {
+			scsi_cmd[7] = ( req->sectors >> 8 ) & 0xFF;
+			scsi_cmd[8] = req->sectors & 0xFF;
+			trans_len = req->len;
+		}
+
+        if( !scsi_block_when_processing_errors(sdev)
+            || sdev->sdev_state == SDEV_CANCEL
+            || sdev->sdev_state == SDEV_DEL ) {
+            sdc_printk(KERN_ERR, sdc_pl,
+                        "*** %s(%d) : SCSI Device is not available (OFFLINE or under REMOVAL)\n",
+                        __FUNCTION__, __LINE__ );
+            retval = -ENODEV;
+            goto fail;
+        }
+
+        /* aborted */
+        if (sdc_pl->trans_state != DIRECT_TRANS_BUSY) {
+            retval = -ESHUTDOWN;
+            goto fail;
+        }
+
+        /* execute scsi command */
+        {
+            memset(sdc_pl->sense_data,0,sizeof(sdc_pl->sense_data));
+            sdc_pl->result
+                = scsi_execute( sdev, scsi_cmd, data_dir,
+                                (void *)phys_to_virt(req->address), trans_len, sdc_pl->sense_data, SD_TIMEOUT, SD_MAX_RETRIES, 0 );
+            if ( sdc_pl->result ){
+                struct scsi_sense_hdr sshdr;
+
+                scsi_normalize_sense(sdc_pl->sense_data, SCSI_SENSE_BUFFERSIZE, &sshdr);
+                if (/*(driver_byte(sdc_pl->result) & DRIVER_SENSE) && */(scsi_sense_valid(&sshdr)))
+                    sd_print_sense_hdr(sdc_to_sdsk(sdc_pl), &sshdr);
+				sdc_printk(KERN_ERR, sdc_pl,
+                           "*** Executing SCSI command was FAILED [result=0x%08x]. %s(%d)\n", 
+                           sdc_pl->result, __FUNCTION__, __LINE__);
+                sd_print_result(sdc_to_sdsk(sdc_pl), sdc_pl->result);
+
+                spin_lock_irqsave(&sdc_pl->lock, flags);
+                if (sdc_pl->trans_state == DIRECT_TRANS_BUSY) {
+                    retval = 0;
+                    sdc_pl->trans_state = DIRECT_TRANS_ERROR;
+                } else if (sdc_pl->trans_state == DIRECT_TRANS_ERROR) {
+                    retval = -ESHUTDOWN;
+                }
+                spin_unlock_irqrestore(&sdc_pl->lock, flags);
+				goto fail;
+            }
+        }
+
+        /* update */
+		req->start += ( trans_len / 512 );
+		req->sectors -= ( trans_len / 512 );
+		req->address += trans_len;
+		req->len -= trans_len;
+	}
+
+ fail:
+
+    if (retval<0) {
+        sdc_printk(KERN_DEBUG, sdc_pl,
+                   "%s(%d) : DIRECT TRANS DEBUG : ERROR EXIT! (retval=%d)\n",
+                   __FUNCTION__, __LINE__, retval);
+    }
+
+    spin_lock_irqsave(&sdc_pl->lock, flags);
+    if (sdc_pl->trans_state == DIRECT_TRANS_BUSY) {
+        sdc_pl->trans_state = (retval==0)? DIRECT_TRANS_DONE: DIRECT_TRANS_ERROR;
+    } else if ( retval && sdc_pl->trans_state == DIRECT_TRANS_ERROR) {
+        sdc_printk(KERN_WARNING, sdc_pl,
+                   "%s(%d) : DIRECT TRANS : ABORTED !\n",
+                   __FUNCTION__, __LINE__);
+    }
+    spin_unlock_irqrestore(&sdc_pl->lock, flags);
+
+    sdc_pl->retval = retval;
+    wake_up( &( sdc_pl->wait_queue ) );
+    put_sdc(sdc_pl);
+
+	return retval;
+}
+
+static int sdc_dev_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    int retval = 0;
+	struct scsi_disk_char *sdc_pl = filp->private_data;
+	struct scsi_device *sdev = NULL;
+	void __user *p = (void __user *)arg;
+
+    if ( unlikely(!sdc_pl) ) {
+		pr_err("*** ERROR: %s(%d) : Entry list is invalid (NULL)\n",
+               __FUNCTION__, __LINE__);
+		retval = -EINVAL;
+        goto fail;
+    }
+
+	if( check_sdc_list_entry(sdc_pl) ){
+		sdc_printk(KERN_CONT, sdc_pl,
+                   "%s(%d) : Entry list is not available  --> Exit\n", __FUNCTION__, __LINE__);
+		retval = -ENODEV;
+        goto fail;
+	}
+
+    /* check scsi devivice was taken offline by error recovery */
+    sdev = sdc_to_sdev(sdc_pl);
+    if (unlikely(!sdev)) {
+		pr_err("*** ERROR: %s(%d) : SCSI Device c_%s is invalid (%p) \n",
+               __FUNCTION__, __LINE__, sdc_dletter(sdc_pl), sdev);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+	if( !scsi_block_when_processing_errors(sdev)
+        || sdev->sdev_state == SDEV_CANCEL
+		|| sdev->sdev_state == SDEV_DEL ) {
+        sdc_printk(KERN_ERR, sdc_pl,
+                   "*** ERROR : %s(%d) : Device is not available (offline or under removal)\n",
+                   __FUNCTION__, __LINE__);
+        retval = -ENODEV;
+        goto fail;
+	}
+		
+	switch (cmd) {
+
+    case SDCDEV_IOCTL_REQ_DIRECT_TRANSFER:
+		{
+			struct sdcdev_ioc_req_direct_transfer *req = &sdc_pl->req_transfer;
+            struct task_struct *thread_taskqueue = NULL; /* For pipelined transfer	*/
+
+			if( copy_from_user( req, p, sizeof( struct sdcdev_ioc_req_direct_transfer ) ) ){
+                sdc_printk(KERN_ERR, sdc_pl,
+                           "*** ERROR: %s(%d)  : Could not be able to retrieve an argument\n",
+                           __FUNCTION__, __LINE__);
+				retval = -EFAULT;
+                goto fail;
+			}
+
+            if (down_interruptible(&sdc_pl->sema)) {
+                retval = -ERESTARTSYS;
+                goto fail;
+            }
+            
+            /* wait loop */
+            while ( sdc_pl->trans_state != DIRECT_TRANS_IDLE ) {
+
+                up(&sdc_pl->sema);
+
+                if (req->nonblock) {
+                    sdc_printk(KERN_DEBUG, sdc_pl,
+                           "%s(%d) : DIRECT_TRANSFER is under going(%d) ---> EXIT.\n",
+                               __FUNCTION__, __LINE__, sdc_pl->trans_state);
+                    retval = -EAGAIN;
+                    goto fail;
+                }
+
+                if ( wait_event_interruptible(sdc_pl->wait_queue,
+                                              (sdc_pl->trans_state==DIRECT_TRANS_IDLE)) ) {
+                    retval = -ERESTARTSYS;
+                    goto fail;
+                }
+
+                if (down_interruptible(&sdc_pl->sema)) {
+                    retval = -ERESTARTSYS;
+                    goto fail;
+                }
+			}
+            
+            if ( unlikely(!get_sdc(sdc_pl)) ) {
+                up(&sdc_pl->sema);
+                retval = -ENODEV;
+                sdc_printk(KERN_ERR, sdc_pl,
+                           "*** ERROR: %s(%d) : get_sdc() is failed\n", __FUNCTION__, __LINE__);
+                goto fail;
+            }
+
+			thread_taskqueue
+                = kthread_create( sdcdev_thread_direct_transfer, sdc_pl,
+                                  "direct_transfer/%s", sdc_dletter(sdc_pl) ); 
+			if( unlikely(IS_ERR(thread_taskqueue)) ){
+                put_sdc(sdc_pl);
+                up(&sdc_pl->sema);
+				retval = PTR_ERR( thread_taskqueue );
+                sdc_printk(KERN_ERR, sdc_pl,
+                           "*** ERROR: %s(%d) : kthread_create error was occurred\n",
+                           __FUNCTION__, __LINE__);
+                goto fail;      /* 2009/5/20, Modified by I.Noguchi */
+			}
+
+            /* 2009/5/20, Modified by I.Noguchi */
+            sdc_pl->trans_state = DIRECT_TRANS_BUSY;
+
+            wake_up(&sdc_pl->wait_queue);
+            up(&sdc_pl->sema);
+
+			wake_up_process( thread_taskqueue );
+
+		}
+        break;
+
+    case SDCDEV_IOCTL_CONF_DIRECT_TRANSFER:
+		{
+			struct sdcdev_ioc_conf_direct_transfer conf;
+            unsigned long flags;
+
+			if( copy_from_user( &conf, p, sizeof( struct sdcdev_ioc_req_direct_transfer ) ) ){
+                sdc_printk(KERN_ERR, sdc_pl,
+                           "*** ERROR: %s(%d) : Could not be able to retrieve an argument\n",
+                           __FUNCTION__, __LINE__);
+				retval = -EFAULT;
+                goto fail;
+			}
+
+            if (down_interruptible(&sdc_pl->sema)) {
+                retval = -ERESTARTSYS;
+                goto fail;
+            }
+            
+            /* wait loop */
+            while ( sdc_pl->trans_state==DIRECT_TRANS_BUSY ) {
+
+                up(&sdc_pl->sema);
+
+                if (conf.nonblock) {
+                    sdc_printk(KERN_DEBUG, sdc_pl,
+                           "%s(%d) : DIRECT_TRANSFER is busy (%d) ---> EXIT.\n",
+                               __FUNCTION__, __LINE__, sdc_pl->trans_state);
+                    retval = -EAGAIN;
+                    goto fail;
+                }
+
+                if ( wait_event_interruptible(sdc_pl->wait_queue,
+                                              (sdc_pl->trans_state!=DIRECT_TRANS_BUSY)) ) {
+                    retval = -ERESTARTSYS;
+                    goto fail;
+                }
+
+                if (down_interruptible(&sdc_pl->sema)) {
+                    retval = -ERESTARTSYS;
+                    goto fail;
+                }
+
+            }
+
+            spin_lock_irqsave(&sdc_pl->lock, flags);
+            if ( sdc_pl->trans_state == DIRECT_TRANS_IDLE ) {
+                retval = -EPROTO;
+                spin_unlock_irqrestore(&sdc_pl->lock, flags);
+                up(&sdc_pl->sema);
+                sdc_printk(KERN_ERR, sdc_pl,
+                           "*** ERROR: %s(%d) : returned from DIRECT_TRANSFER (kthread) with invalid state (%d).\n",
+                           __FUNCTION__, __LINE__, sdc_pl->trans_state);
+                goto fail;
+            }
+            sdc_pl->trans_state = DIRECT_TRANS_IDLE;
+            spin_unlock_irqrestore(&sdc_pl->lock, flags);
+            wake_up(&sdc_pl->wait_queue);
+
+            /* check whether error is occurred */
+            if(sdc_pl->retval){
+                retval = sdc_pl->retval;
+                up(&sdc_pl->sema);
+                goto fail;
+            }
+
+            /* Sense data is valid  */
+            conf.status = sdc_pl->result;
+            if ( conf.status ) {
+                if(conf.senselen>SCSI_SENSE_BUFFERSIZE)
+                    conf.senselen = SCSI_SENSE_BUFFERSIZE;
+                if( copy_to_user( conf.sense, sdc_pl->sense_data, conf.senselen ) ) {
+                    retval = -EFAULT;
+                    up(&sdc_pl->sema);
+                    sdc_printk(KERN_ERR, sdc_pl,
+                               "*** ERROR: %s(%d) : Could not be able to retrieve an argument\n",
+                               __FUNCTION__, __LINE__);
+                    goto fail;
+                }
+			}
+
+			if( copy_to_user( p, &conf, sizeof( struct sdcdev_ioc_req_direct_transfer ) ) ){
+				retval = -EFAULT;
+                up(&sdc_pl->sema);
+                sdc_printk(KERN_ERR, sdc_pl,
+                            "*** ERROR: %s(%d) : Could not be able to retrieve an argument\n",
+                            __FUNCTION__, __LINE__);
+				goto fail;
+			}
+
+            up(&sdc_pl->sema);
+
+		}
+        break;
+
+    case SDCDEV_IOCTL_CHK_DIRECT_TRANSFER:
+        {
+            unsigned long flags;
+            spin_lock_irqsave( &(sdc_pl->lock), flags );
+            retval = sdc_pl->trans_state;
+            spin_unlock_irqrestore( &(sdc_pl->lock), flags );
+        }
+        break;
+
+       /* 2011/4/19, added by Panasonic(SAV) ---> */
+ 
+    case SDCDEV_IOCTL_SET_TMOUT:
+        {
+            unsigned int timeout = (unsigned int)arg;
+            if (!timeout) {
+                retval = -EINVAL;
+                goto fail;
+            }
+            sdev->timeout = msecs_to_jiffies(timeout);
+        }
+        break;
+
+    case SDCDEV_IOCTL_GET_TMOUT:
+        {
+            unsigned int timeout = jiffies_to_msecs(sdev->timeout);
+            if (copy_to_user(p, &timeout, sizeof(unsigned int))) {
+                retval = -EFAULT;
+                sdc_printk(KERN_ERR, sdc_pl,
+                            "*** ERROR: %s(%d) : Could not be able to retrieve an argument\n",
+                            __FUNCTION__, __LINE__);
+                goto fail;
+            }
+        }
+        break;
+
+       /* <-- 2011/4/19, added by Panasonic(SAV) */
+
+        /* 2010/10/01, added by Panasonic(SAV) ---> */
+    case SG_IO:
+        retval = scsi_cmd_ioctl(filp, sdev->request_queue, NULL, cmd, p);
+        break;
+        /* <--- 2010/10/01, added by Panasonic(SAV) */
+
+    default:
+        /* 2011/2/3, added by Panasonic(SAV) ---> */
+        retval = scsi_nonblockable_ioctl(sdev, cmd, (void __user *)arg, NULL);
+        if (retval != -ENODEV)
+            break;
+        /* <--- 2011/2/3, added by Panasonic(SAV) */
+        retval = scsi_ioctl(sdev, cmd, (void __user *)arg);
+/* 			printk("sd_dev_ioctl() : Comannd not supported [cmd = %d]\n", cmd); */
+/* 			retval = -EINVAL; */
+	}
+
+ fail:
+	return retval;
+}
+
+static unsigned int sdc_dev_poll(struct file *filp, poll_table *wait)
+{
+	struct scsi_disk_char *sdc_pl = filp->private_data;
+	struct scsi_device *sdev = NULL;
+    unsigned int mask = 0;
+    //    unsigned long flags;
+
+    if ( unlikely(!sdc_pl) ) {
+		pr_err("*** ERROR : %s(%d) : Entry list is inbalid (NULL)  --> Exit(POLLHUP)\n",
+               __FUNCTION__, __LINE__);
+		mask |= POLLHUP;
+        goto fail;
+    }
+
+    if( check_sdc_list_entry(sdc_pl) ){
+        sdc_printk(KERN_ERR, sdc_pl,
+                   "%s(%d) : Entry list is not available  --> Exit(POLLHUP)\n",
+                   __FUNCTION__, __LINE__);
+		mask |= POLLHUP;
+		goto fail;
+    }
+
+    /* check scsi devivice was taken offline by error recovery */
+    sdev = sdc_to_sdev(sdc_pl);
+    if (unlikely(!sdev)) {
+		pr_err("*** ERROR: %s(%d) : SCSI Device c_%s is invalid (NULL) --> POLLHUP\n",
+                   __FUNCTION__, __LINE__, sdc_dletter(sdc_pl) );
+		mask |= POLLHUP;
+		goto fail;
+	}
+
+	if( !scsi_block_when_processing_errors(sdev)
+        || sdev->sdev_state == SDEV_CANCEL
+		|| sdev->sdev_state == SDEV_DEL ) {
+        sdc_printk(KERN_ERR, sdc_pl,
+                    "%s(%d) : Device c_%s is not available (offline or under removal) --> POLLHUP\n",
+                    __FUNCTION__, __LINE__, sdc_dletter(sdc_pl));
+		mask |= POLLHUP;
+		goto fail;
+	}
+
+	poll_wait(filp, &(sdc_pl->wait_queue), wait);
+/* 2010/4/8, added by Panasonic */
+#ifdef CONFIG_P2PF_SCSI_DISK_BLK_ERROR
+	poll_wait(filp, &(sdev->blk_err_wait_queue), wait);
+#endif  /* CONFIG_P2PF_SCSI_DISK_BLK_ERROR */
+
+	switch( sdc_pl->trans_state ){
+	case DIRECT_TRANS_DONE:
+		mask |= POLLOUT;
+		break;
+
+	case DIRECT_TRANS_ERROR:
+		mask |= POLLERR;
+		break;
+
+	case DIRECT_TRANS_IDLE:
+	case DIRECT_TRANS_BUSY:
+	default:
+		break;
+	}
+
+/* 2010/4/8-13, added by Panasonic >>>> */
+#ifdef CONFIG_P2PF_SCSI_DISK_BLK_ERROR
+    if(sdev->blk_err_count)
+        mask |= POLLPRI;
+#endif  /* CONFIG_P2PF_SCSI_DISK_BLK_ERROR */
+/* <<<< 2010/4/8-13, added by Panasonic */
+
+ fail:
+	return mask;
+}
+
+static int sdc_dev_open(struct inode *inode, struct file *filp)
+{
+    int retval=0;
+	char dl[32];
+	struct scsi_disk_char *sdc_pl=NULL;
+    struct scsi_device *sdev=NULL;
+
+/*     pr_debug("Open SCSI disk character driver (minor > 0)\n"); */
+
+	int target = MINOR(inode->i_rdev) - 1;
+	if( unlikely(target > SDC_MAX_DEVICE_NUM) ){
+		pr_err("*** ERROR: %s(%d) : Device number %d does not support\n",
+               __FUNCTION__, __LINE__, target);
+		retval = -ENODEV;
+        goto fail;
+	}
+
+	/* Find sdc_device infomation from the device list by minor number	*/
+	/* Create drive letter by minor number								*/
+    sd_disk_name(target, dl, sizeof(dl));
+
+	/* and then serch & find myself on the list						 	*/
+	sdc_pl = get_sdc_by_dletter( &dl[0] );
+	if( !sdc_pl ) {
+		pr_err("*** ERROR: %s(%d) : Device open error (device c_%s not found)\n",
+               __FUNCTION__, __LINE__, &dl[0]);
+		retval = -ENODEV;
+        goto fail;
+	}
+
+    /* check scsi devivice was taken offline by error recovery */
+    sdev = sdc_to_sdev(sdc_pl);
+    if (unlikely(!sdev) || !scsi_block_when_processing_errors(sdev)) {
+		pr_err("*** ERROR: %s(%d) : SCSI Device (%p) is invalid or offline (device c_%s not found)\n",
+               __FUNCTION__, __LINE__, sdev, &dl[0]);
+        retval = -ENODEV;
+        goto fail;
+    }
+
+	/* Initialize */
+	filp->private_data = ( void * )sdc_pl;
+
+ fail:
+    if(retval<0){
+        if(sdc_pl)
+            put_sdc(sdc_pl);
+    } else {
+/*         sdc_printk(KERN_DEBUG, sdc_pl, */
+/*                    "*** SCSI disk character driver is opend (minor=%d).\n", */
+/*                    MINOR(inode->i_rdev)); */
+    }
+
+	return retval;
+}
+
+static int sdc_dev_release(struct inode *inode, struct file *filp)
+{
+    int retval=0;
+    struct scsi_disk_char *sdc_pl=filp->private_data;
+
+/*     sdc_printk(KERN_DEBUG, sdc_pl, */
+/*                "*** SCSI disk character driver is closed (minor=%d).\n", */
+/*                MINOR(inode->i_rdev)); */
+
+    if(sdc_pl)
+        put_sdc(sdc_pl);
+
+	return retval;
+}
+
+static struct file_operations sdc_dev_fops = {
+	owner:		THIS_MODULE,
+	ioctl:		sdc_dev_ioctl,
+	poll:		sdc_dev_poll,
+	open:		sdc_dev_open,
+	release:	sdc_dev_release,
+};
+
+/*
+    Following functions will provide SCSI disk charactor (sdc) driver.
+    2008-jul-24, Panasonic (SAV)
+*/
+static int sdc_open(struct inode *inode, struct file *filp)
+{
+/*printk("Open SCSI disk character driver (minor = 0)\n");*/
+	int minor_num = 0;
+
+    /* register fops for device (minor >= 1) */
+    minor_num = MINOR(inode->i_rdev);
+
+    if( minor_num >= 1 ){
+        filp->f_op = &sdc_dev_fops;
+        return filp->f_op->open(inode, filp);
+    }
+
+/*     printk(KERN_DEBUG "*** SCSI disk character driver is opend (minor=%d).\n", */
+/*            MINOR(inode->i_rdev)); */
+
+	return 0;
+}
+
+static int sdc_release(struct inode *inode, struct file *filp)
+{
+
+/*     printk(KERN_DEBUG "*** SCSI disk character driver is closed (minor=%d).\n", */
+/*            MINOR(inode->i_rdev)); */
+
+    return 0;
+}
+
+static unsigned int sdc_poll(struct file *filp, poll_table *wait)
+{
+    unsigned int mask = 0;
+
+    poll_wait(filp, &sdc_poll_wait_queue, wait);
+    spin_lock( &sdc_plug_status_lock );
+
+   	if( plug_event_poll_usb == SDC_PLUG_EVENT_USB_IN ){
+		printk("sdc_poll() : SDC_PLUG_EVENT_USB (INSERTION)\n");
+       	mask |= POLLIN;
+		plug_event_poll_usb = SDC_PLUG_NO_EVENT;
+	}else
+	if( plug_event_poll_usb == SDC_PLUG_EVENT_USB_OUT ){
+		printk("sdc_poll() : SDC_PLUG_EVENT_USB (REMOVAL)\n");
+		mask |= POLLIN;
+		plug_event_poll_usb = SDC_PLUG_NO_EVENT;
+	}else
+	if( plug_event_poll_sata0 == SDC_PLUG_EVENT_SATA_IN ){
+		printk("sdc_poll() : SDC_PLUG_EVENT_SATA (PORT0 : INSERTION)\n");
+		mask |= POLLOUT;
+		plug_event_poll_sata0 = SDC_PLUG_NO_EVENT;
+	}else
+	if( plug_event_poll_sata0 == SDC_PLUG_EVENT_SATA_OUT ){
+		printk("sdc_poll() : SDC_PLUG_EVENT_SATA (PORT0 : REMOVAL)\n");
+		mask |= POLLOUT;
+		plug_event_poll_sata0 = SDC_PLUG_NO_EVENT;
+	}else
+	if( plug_event_poll_sata1 == SDC_PLUG_EVENT_SATA_IN ){
+		printk("sdc_poll() : SDC_PLUG_EVENT_SATA (PORT1 : INSERTION)\n");
+		mask |= POLLPRI;
+		plug_event_poll_sata1 = SDC_PLUG_NO_EVENT;
+	}else
+	if( plug_event_poll_sata1 == SDC_PLUG_EVENT_SATA_OUT ){
+		printk("sdc_poll() : SDC_PLUG_EVENT_SATA (PORT1 : REMOVAL)\n");
+		mask |= POLLPRI;
+		plug_event_poll_sata1 = SDC_PLUG_NO_EVENT;
+	}
+
+    spin_unlock( &sdc_plug_status_lock );
+    return mask;
+}
+
+static int sdc_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    int retval = 0;
+	void __user *p = (void __user *)arg;
+
+    switch( cmd ){
+    case SDC_IOCTL_USB_FIND_SDDEV:
+
+        if (unlikely(!arg)) {
+            printk("sdc_ioctl() : Argument error\n");
+            retval=-EFAULT;
+            break;
+        }
+
+		{
+			Scsi_Idlun idlun;
+			struct scsi_disk_char *sdc_pl=NULL;
+            struct list_head *ptr;
+            unsigned long flags;
+
+			char dletter[5];
+			int str_len = 0;
+			int	d_num = 0;
+
+			if( copy_from_user( &idlun, p, sizeof( Scsi_Idlun ) ) ){
+				retval = -EFAULT;
+				goto exit;
+			}
+
+            spin_lock_irqsave(&sdc_list_lock, flags);
+
+			/* Serch entry by ordering number	*/
+            list_for_each(ptr, &sdc_list_head) {
+                struct scsi_disk_char *pl
+                    = list_entry(ptr, struct scsi_disk_char, list);
+				if( ( ( idlun.dev_id & 0xff000000 ) == ( pl->dev_id & 0xff000000 ) ) &&
+					( (int)( ( idlun.dev_id & 0x0000ff00 ) >> 8 )== ( (pl->sdc_dinfo).max_lun ) ) ) {
+                    sdc_pl = pl;
+                    break;
+                }
+            }
+
+            spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+            if (!sdc_pl) {
+                retval = -ENODEV;
+                goto exit;
+            }
+
+            str_len = strlen( sdc_dletter(sdc_pl) );
+            if( str_len == 3 ){
+                memset( dletter, 0, sizeof(dletter) );
+                strncpy( dletter, sdc_dletter(sdc_pl), 3 );
+                if( !strncmp( dletter, "sd", 2 ) ){
+                    d_num = dletter[2] - 'a';
+                    retval = d_num;
+                }else {
+                    retval = -ENODEV;
+                }
+            } else if( str_len == 4 ) {
+                memset( dletter, 0, sizeof(dletter) );
+                strncpy( dletter, sdc_dletter(sdc_pl), 4 );
+                if( !strncmp( dletter, "sda", 3 ) ){
+                    d_num = 26 + ( dletter[3] - 'a' );
+                    retval = d_num;
+                }else {
+                    retval = -ENODEV;
+                }
+            } else {
+                retval = -ENODEV;
+                goto exit;
+            }
+
+        }
+break;
+
+	case SDC_IOCTL_USB_STATUS:
+
+		if( !arg ){
+			printk("sdc_ioctl() : Argument error\n");
+			retval = -EINVAL;
+			break;
+		}
+
+		if( !access_ok( VERIFY_READ, p, sizeof( struct sdc_ioc_status ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			break;
+		}
+
+		spin_lock( &sdc_plug_status_lock );
+		__put_user( usb_numof_device, &( ( struct sdc_ioc_status * )arg )->sdc_num );
+		__put_user( usb_numof_device_total, &( ( struct sdc_ioc_status * )arg )->sdc_total_num );
+		spin_unlock( &sdc_plug_status_lock );
+		break;
+
+	case SDC_IOCTL_ATA_STATUS:
+		if( !arg ){
+			printk("sdc_ioctl() : Argument error\n");
+			retval = -EINVAL;
+			break;
+		}
+
+		if( !access_ok( VERIFY_READ, p, sizeof( struct sdc_ioc_status ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			break;
+		}
+
+		spin_lock( &sdc_plug_status_lock );
+		__put_user( ata_numof_device, &( ( struct sdc_ioc_status * )arg )->sdc_num );
+		__put_user( ata_numof_device_total, &( ( struct sdc_ioc_status * )arg )->sdc_total_num );
+		spin_unlock( &sdc_plug_status_lock );
+		break;
+
+	case SDC_IOCTL_USB_DEV_INFO:
+
+		if( !arg ){
+			printk("sdc_ioctl() : Argument error\n");
+			retval = -EINVAL;
+			break;
+		}
+
+		if( !access_ok( VERIFY_WRITE, p, sizeof( struct sdc_ioc_dev_info ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			break;
+		}
+
+		if( !access_ok( VERIFY_READ, p, sizeof( struct sdc_ioc_dev_info ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			break;
+		}
+		{
+			int host_id, id_flag;
+			struct scsi_disk_char *sdc_pl;
+			struct sdc_dev_info sdc_info;
+
+			__get_user( host_id, &( (struct sdc_ioc_dev_info *)arg )->no );
+			__get_user( id_flag, &( (struct sdc_ioc_dev_info * )arg )->flag );
+
+			sdc_pl = find_sdc_list_entry_by_hostid( host_id, id_flag );
+			if( sdc_pl ){
+				sdc_fillup_dev_info( sdc_pl, &sdc_info );
+				if( sdc_pl->hosttype == SCSI_HOSTTYPE_USB ){
+					__copy_to_user( &( (struct sdc_ioc_dev_info * )arg )->dev_info,
+							&sdc_info, sizeof( struct sdc_dev_info ) );
+				}else {
+					printk("sdc_ioctl() : [SDC_IOCTL_USB_DEV_INFO] Seems not a USB device\n");
+					retval = -ENODEV;
+				}
+			}else {
+				retval = -ENODEV;
+			}
+		}		
+		break;
+
+	case SDC_IOCTL_ATA_DEV_INFO:
+		
+		if( !arg ){
+			printk("sdc_ioctl() : Argument error\n");
+			retval = -EINVAL;
+			break;
+		}
+
+		if( !access_ok( VERIFY_WRITE, p, sizeof( struct sdc_ioc_dev_info ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			break;
+		}
+
+		if( !access_ok( VERIFY_READ, p, sizeof( struct sdc_ioc_dev_info ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			break;
+		}
+
+		{
+			int host_id, id_flag;
+			struct scsi_disk_char *sdc_pl;
+			struct sdc_dev_info sdc_info;
+
+			__get_user( host_id, &( (struct sdc_ioc_dev_info *)arg )->no );
+			__get_user( id_flag, &( (struct sdc_ioc_dev_info * )arg )->flag );
+
+			sdc_pl = find_sdc_list_entry_by_hostid( host_id, id_flag );
+			if( sdc_pl ){
+				sdc_fillup_dev_info( sdc_pl, &sdc_info );
+				if( sdc_pl->hosttype == SCSI_HOSTTYPE_SATA ){
+					__copy_to_user( &( (struct sdc_ioc_dev_info * )arg )->dev_info,
+							&sdc_info, sizeof( struct sdc_dev_info ) );
+				}else {
+					printk("sdc_ioctl() : [SDC_IOCTL_ATA_DEV_INFO] Seems not an ATA device\n");
+					retval = -ENODEV;
+				}
+			}else {
+				retval = -ENODEV;
+			}
+		}
+		break;
+
+	case SDC_IOCTL_USB_FIND_DEV_CONNECTED:
+
+		if (unlikely(!arg)) {
+			printk("sdc_ioctl() : Argument error\n");
+			retval = -EINVAL;
+			goto exit;
+		}
+
+		if( !access_ok( VERIFY_WRITE, p, sizeof( struct sdc_ioc_dev_info ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			goto exit;
+		}
+
+		if( !access_ok( VERIFY_READ, p, sizeof( struct sdc_ioc_dev_info ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			goto exit;
+		}
+
+		{
+			int host_id, id_flag;
+			struct scsi_disk_char *sdc_pl = NULL;
+			struct sdc_dev_info sdc_info;
+            unsigned long flags;
+
+			__get_user( host_id, &( (struct sdc_ioc_dev_info *)arg )->no );
+			__get_user( id_flag, &( (struct sdc_ioc_dev_info * )arg )->flag );
+
+			if ( unlikely(host_id > SDC_MAX_DEVICE_NUM) ) {
+				printk("sdc_ioctl() : Host No. exceeds SDC_MAX_DEVICE_NUM\n");
+				retval = -EINVAL;
+				goto exit;
+			}
+
+			if ( host_id < 0 ) { /* Report first "USB device" in the ently   */
+                struct list_head *ptr=NULL;
+
+                spin_lock_irqsave(&sdc_list_lock, flags);
+
+                list_for_each(ptr, &sdc_list_head) {
+                    struct scsi_disk_char *pl = list_entry(ptr, struct scsi_disk_char, list);
+ 					if( pl->hosttype == SCSI_HOSTTYPE_USB ){
+                        sdc_pl = pl;
+                        break;
+                    }
+                }
+
+                spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+			} else { /* Report another next "USB device" of the specified host id    */
+
+				struct scsi_disk_char *pl = find_sdc_list_entry_by_hostid( host_id, id_flag );
+                if (!pl) {
+                    retval = -ENODEV;
+                    goto exit;
+                }
+
+                spin_lock_irqsave(&sdc_list_lock, flags);
+
+                list_for_each_entry_continue(pl, &sdc_list_head, list) {
+                    if( ( pl->hosttype == SCSI_HOSTTYPE_USB ) &&
+                        ( ( ( pl->dev_id >> 8 ) & 0xff ) == 0 ) ) {
+                        sdc_pl = pl;
+                        break;
+                    }
+                }
+
+                spin_unlock_irqrestore(&sdc_list_lock, flags);
+			}
+
+            if( !sdc_pl ){
+                retval = -ENODEV;
+                goto exit;
+            }
+
+            sdc_fillup_dev_info( sdc_pl, &sdc_info );
+            __put_user(  sdc_pl->host_no, &( ( struct sdc_ioc_dev_info * )arg )->no );
+            __copy_to_user( &( (struct sdc_ioc_dev_info * )arg )->dev_info,
+                            &sdc_info, sizeof( struct sdc_dev_info ) );
+
+		}
+		break;
+
+	case SDC_IOCTL_ATA_FIND_DEV_CONNECTED:
+
+		if( !arg ){
+			printk("sdc_ioctl() : Argument error\n");
+			retval = -EINVAL;
+			break;
+		}
+
+		if( !access_ok( VERIFY_WRITE, p, sizeof( struct sdc_ioc_dev_info ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			break;
+		}
+
+		if( !access_ok( VERIFY_READ, p, sizeof( struct sdc_ioc_dev_info ) ) ){
+			printk("sdc_ioctl() : Could not be able to access to an argument\n");
+			retval = -EFAULT;
+			break;
+		}
+		{
+			int host_id, id_flag;
+			struct scsi_disk_char *sdc_pl = NULL;
+			struct sdc_dev_info sdc_info;
+            unsigned long flags;
+
+			__get_user( host_id, &( (struct sdc_ioc_dev_info *)arg )->no );
+			__get_user( id_flag, &( (struct sdc_ioc_dev_info * )arg )->flag );
+
+			if( host_id > SDC_MAX_DEVICE_NUM ){
+				printk("sdc_ioctl() : Host No. exceeds SDC_MAX_DEVICE_NUM\n");
+				retval = -EINVAL;
+				goto exit;
+			}
+
+			if ( host_id < 0 ) { /* Report first "ATA device" in the ently   */
+                struct list_head *ptr=NULL;
+
+                spin_lock_irqsave(&sdc_list_lock, flags);
+
+                list_for_each(ptr, &sdc_list_head) {
+                    struct scsi_disk_char *pl
+                        = list_entry(ptr, struct scsi_disk_char, list);
+ 					if( pl->hosttype == SCSI_HOSTTYPE_SATA ){
+                        sdc_pl = pl;
+                        break;
+                    }
+                }
+
+                spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+			} else { /* Report another next "ATA device" of the specified host id    */
+
+				struct scsi_disk_char *pl = find_sdc_list_entry_by_hostid( host_id, id_flag );
+                if (!pl) {
+                    retval = -ENODEV;
+                    goto exit;
+                }
+
+                spin_lock_irqsave(&sdc_list_lock, flags);
+
+                list_for_each_entry_continue(pl, &sdc_list_head, list) {
+					if ( ( pl->hosttype == SCSI_HOSTTYPE_SATA ) &&
+                          ( ( ( pl->dev_id >> 8 ) & 0xff ) == 0 ) ) {
+                        sdc_pl = pl;
+                        break;
+                    }
+                }
+
+                spin_unlock_irqrestore(&sdc_list_lock, flags);
+			}
+
+            if( !sdc_pl ){
+                retval = -ENODEV;
+                goto exit;
+            }
+
+            sdc_fillup_dev_info( sdc_pl, &sdc_info );
+            __put_user(  sdc_pl->host_no, &( ( struct sdc_ioc_dev_info * )arg )->no );
+            __copy_to_user( &( (struct sdc_ioc_dev_info * )arg )->dev_info,
+                            &sdc_info, sizeof( struct sdc_dev_info ) );
+
+		}
+		break;
+
+	case SDC_IOCTL_USB_CHECK_HOTPLUG_EVENT:
+
+		/* Check usb plug event parameters	*/
+		retval = (usb_plug_event != 0)?1:0;
+		if(arg)
+			usb_plug_event = 0;		/* Clear	*/
+		break;
+
+	case SDC_IOCTL_ATA_CHECK_HOTPLUG_EVENT:
+
+		/* Check ata plug event parameters  */
+		retval = (ata_plug_event != 0)?1:0;
+		if(arg)
+			ata_plug_event = 0;		 /* Clear    */
+		break;
+
+    default:
+		printk("sdc_ioctl() : ioctl command [%d] error\n", cmd);
+        retval = -EINVAL;
+    }
+
+ exit:
+	return retval;
+}
+
+static struct file_operations sdc_fops = {
+    owner:          THIS_MODULE,
+    ioctl:          sdc_ioctl,
+	poll:			sdc_poll,
+    open:           sdc_open,
+    release:        sdc_release,
+};
+
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 */
 
 /**
  *	sd_done - bottom half handler: called when the lower level
@@ -1093,6 +2743,46 @@ static int sd_done(struct scsi_cmnd *SCpnt)
  out:
 	if (rq_data_dir(SCpnt->request) == READ && scsi_prot_sg_count(SCpnt))
 		sd_dif_complete(SCpnt, good_bytes);
+
+/* 2010/4/8-13, added by Panasonic >>>> */
+#ifdef CONFIG_P2PF_SCSI_DISK_BLK_ERROR
+    if(blk_fs_request(SCpnt->request) && !good_bytes){
+        struct scsi_device *sdev = SCpnt->device;
+        struct scsi_disk_char *sdc_pl = NULL;
+        struct list_head *ptr=NULL;
+        unsigned long flags;
+
+        spin_lock_irqsave(&sdc_list_lock, flags);
+        list_for_each(ptr, &sdc_list_head) {
+            struct scsi_disk_char *pl
+                = list_entry(ptr, struct scsi_disk_char, list);
+            if ( sdev==sdc_to_sdev(pl) ) {
+                sdc_pl = pl;
+                break;
+            }
+         }
+        spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+        if(sdc_pl)
+            sdc_printk(KERN_ERR, sdc_pl,
+                       "*** ERROR: %s(%d) scsi disk block driver error is detected.\n",
+                       __FUNCTION__, __LINE__ );
+
+        spin_lock_irqsave(&(sdev->blk_err_lock),flags);
+        if(sdev->blk_err_count<MAX_INT)
+            sdev->blk_err_count++;
+        sdev->blk_err_status.result=(unsigned int)result;
+        sdev->blk_err_status.sense_valid = sense_valid;
+        sdev->blk_err_status.sense_deferred = sense_deferred;
+        sdev->blk_err_status.response_code = sshdr.response_code;
+        sdev->blk_err_status.sense_key = sshdr.sense_key;
+        sdev->blk_err_status.asc = sshdr.asc;
+        sdev->blk_err_status.ascq = sshdr.ascq;
+        spin_unlock_irqrestore(&(sdev->blk_err_lock),flags);
+        wake_up(&(sdev->blk_err_wait_queue));
+    }
+#endif  /* CONFIG_P2PF_SCSI_DISK_BLK_ERROR */
+/* <<<< 2010/4/8-13, added by Panasonic */
 
 	return good_bytes;
 }
@@ -1454,10 +3144,17 @@ got_data:
 		mb -= sz - 974;
 		sector_div(mb, 1950);
 
+#if defined(CONFIG_DISABLE_SDPROBE_MESSAGE)
+		sd_printk(KERN_DEBUG, sdkp,
+			  "%llu %d-byte hardware sectors (%llu MB)\n",
+			  (unsigned long long)sdkp->capacity,
+			  hard_sector, (unsigned long long)mb);
+#else /* ! CONFIG_DISABLE_SDPROBE_MESSAGE */
 		sd_printk(KERN_NOTICE, sdkp,
 			  "%llu %d-byte hardware sectors (%llu MB)\n",
 			  (unsigned long long)sdkp->capacity,
 			  hard_sector, (unsigned long long)mb);
+#endif /* CONFIG_DISABLE_SDPROBE_MESSAGE */
 	}
 
 	/* Rescale capacity to 512-byte units */
@@ -1534,11 +3231,19 @@ sd_read_write_protect_flag(struct scsi_disk *sdkp, unsigned char *buffer)
 	} else {
 		sdkp->write_prot = ((data.device_specific & 0x80) != 0);
 		set_disk_ro(sdkp->disk, sdkp->write_prot);
+#if defined(CONFIG_DISABLE_SDPROBE_MESSAGE)
+		sd_printk(KERN_DEBUG, sdkp, "Write Protect is %s\n",
+			  sdkp->write_prot ? "on" : "off");
+		sd_printk(KERN_DEBUG, sdkp,
+			  "Mode Sense: %02x %02x %02x %02x\n",
+			  buffer[0], buffer[1], buffer[2], buffer[3]);
+#else /* ! CONFIG_DISABLE_SDPROBE_MESSAGE */
 		sd_printk(KERN_NOTICE, sdkp, "Write Protect is %s\n",
 			  sdkp->write_prot ? "on" : "off");
 		sd_printk(KERN_DEBUG, sdkp,
 			  "Mode Sense: %02x %02x %02x %02x\n",
 			  buffer[0], buffer[1], buffer[2], buffer[3]);
+#endif /* CONFIG_DISABLE_SDPROBE_MESSAGE */
 	}
 }
 
@@ -1647,7 +3352,11 @@ bad_sense:
 		sd_printk(KERN_ERR, sdkp, "Asking for cache data failed\n");
 
 defaults:
+#if defined(CONFIG_DISABLE_SDPROBE_MESSAGE)
+	sd_printk(KERN_DEBUG, sdkp, "Assuming drive cache: write through\n");
+#else /* ! CONFIG_DISABLE_SDPROBE_MESSAGE */
 	sd_printk(KERN_ERR, sdkp, "Assuming drive cache: write through\n");
+#endif /* CONFIG_DISABLE_SDPROBE_MESSAGE */
 	sdkp->WCE = 0;
 	sdkp->RCD = 0;
 	sdkp->DPOFUA = 0;
@@ -1767,9 +3476,57 @@ static int sd_revalidate_disk(struct gendisk *disk)
 	set_capacity(disk, sdkp->capacity);
 	kfree(buffer);
 
+#if 0
+	/* Todo: eroor occered at SATA connection -->  What would you do at re-enumerating */
+	if (sdkp->media_present) {
+	  if( sdkp->device->host->plug_device == 0){
+	    sdkp->device->host->plug_device = 1;
+	    sysfs_notify(&sdkp->device->host->shost_classdev.kobj , NULL , "plug_device");
+	  }
+	}
+#endif
+
  out:
 	return 0;
 }
+
+/* Modified by Panasonic (SAV), 2009-sep-25 */
+static int sd_mount_fs(struct inode *inode)
+{
+	struct device *dev = inode->i_bdev->bd_disk->driverfs_dev;
+	struct scsi_device *sdp = to_scsi_device(dev);
+
+	if(sdp->notify_ops){
+		if(sdp->notify_ops->mount_fs){
+			sdp->notify_ops->mount_fs(sdp);
+		}
+	}
+
+	return 0;
+}
+/*------------------------------------------*/
+
+/* Modified by Panasonic (SAV), 2009-sep-25 */
+static int sd_umount_fs(struct inode *inode)
+{
+	struct device *dev = inode->i_bdev->bd_disk->driverfs_dev;
+	struct scsi_device *sdp;
+
+	if(!dev){
+		return 0;
+	}
+
+	sdp = to_scsi_device(dev);
+
+	if(sdp->notify_ops){
+		if(sdp->notify_ops->umount_fs){
+			sdp->notify_ops->umount_fs(sdp);
+		}
+	}
+
+	return 0;
+}
+/*------------------------------------------*/
 
 /**
  *	sd_probe - called during driver initialization and whenever a
@@ -1797,6 +3554,13 @@ static int sd_probe(struct device *dev)
 	u32 index;
 	int error;
 
+/* P2PF TARGET DEPENDENT CODE (K277) -->	*/
+/* Modified by Panasonic : 2009/06/09		*/
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+	struct block_device *bdev;
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <-- P2PF TARGET DEPENDENT CODE (K277)	*/
+
 	error = -ENODEV;
 	if (sdp->type != TYPE_DISK && sdp->type != TYPE_MOD && sdp->type != TYPE_RBC)
 		goto out;
@@ -1809,7 +3573,12 @@ static int sd_probe(struct device *dev)
 	if (!sdkp)
 		goto out;
 
+	/* Modified by Panasonic (SAV), 2008-jul-28 */
+#ifdef CONFIG_P2PF_SCSI_DISK_PAT_EX
+	gd = alloc_disk(32);	/* Supporting over 16 partitions   */
+#else
 	gd = alloc_disk(16);
+#endif /* P2PF_SCSI_DISK_PAT_EX	*/
 	if (!gd)
 		goto out_free;
 
@@ -1851,23 +3620,19 @@ static int sd_probe(struct device *dev)
 
 	get_device(&sdp->sdev_gendev);
 
+	/* Modified by Panasonic (SAV), 2008-jul-24 */
+#ifdef CONFIG_P2PF_SCSI_DISK_PAT_EX
+	gd->major = sd_major((index & 0xf8) >> 3);
+	gd->first_minor = ((index & 0x07) << 5) | (index & 0xfff80);
+	gd->minors = 32;	/* Supporting over 16 partitions   */
+#else
 	gd->major = sd_major((index & 0xf0) >> 4);
 	gd->first_minor = ((index & 0xf) << 4) | (index & 0xfff00);
 	gd->minors = 16;
+#endif	/* P2PF_SCSI_DISK_PAT_EX	*/
 	gd->fops = &sd_fops;
 
-	if (index < 26) {
-		sprintf(gd->disk_name, "sd%c", 'a' + index % 26);
-	} else if (index < (26 + 1) * 26) {
-		sprintf(gd->disk_name, "sd%c%c",
-			'a' + index / 26 - 1,'a' + index % 26);
-	} else {
-		const unsigned int m1 = (index / 26 - 1) / 26 - 1;
-		const unsigned int m2 = (index / 26 - 1) % 26;
-		const unsigned int m3 =  index % 26;
-		sprintf(gd->disk_name, "sd%c%c%c",
-			'a' + m1, 'a' + m2, 'a' + m3);
-	}
+    sd_disk_name(index,gd->disk_name,sizeof(gd->disk_name));
 
 	gd->private_data = &sdkp->driver;
 	gd->queue = sdkp->device->request_queue;
@@ -1882,11 +3647,54 @@ static int sd_probe(struct device *dev)
 		gd->flags |= GENHD_FL_REMOVABLE;
 
 	dev_set_drvdata(dev, sdkp);
+
+/* Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+    /* Add removal detection, 2009/06/09    */
+    bdev = bdget_disk(sdkp->disk, 0);
+    bdev->removal_detection = 0;	/* Clear removal detection flag */
+    sd_printk(
+#if defined(CONFIG_DISABLE_SDPROBE_MESSAGE)
+             KERN_DEBUG,
+#else /* ! CONFIG_DISABLE_SDPROBE_MESSAGE */
+             KERN_CONT,
+#endif /* CONFIG_DISABLE_SDPROBE_MESSAGE */
+              sdkp, "%s(%d) : Initialize removal detection flag\n",
+             __FUNCTION__, __LINE__);
+
+#endif /* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 */
+
 	add_disk(gd);
 	sd_dif_config_host(sdkp);
 
-	sd_printk(KERN_NOTICE, sdkp, "Attached SCSI %sdisk\n",
-		  sdp->removable ? "removable " : "");
+	sd_printk(
+#if defined(CONFIG_DISABLE_SDPROBE_MESSAGE)
+             KERN_DEBUG,
+#else /* ! CONFIG_DISABLE_SDPROBE_MESSAGE */
+             KERN_CONT,
+#endif /* CONFIG_DISABLE_SDPROBE_MESSAGE */
+             sdkp, "Attached SCSI %sdisk\n",
+             sdp->removable ? "removable " : "");
+
+/* Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+	/* Add device info & notify to sysfs    */
+	/* Modified : 2009/07/23, 2010/8/24 	*/
+    if (index<SDC_MAX_DEVICE_NUM) {
+        error = sdc_add( dev );
+        if(error<0)
+            goto out_free_index;
+    }
+
+#endif /* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* <--- Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 */
 
 	return 0;
 
@@ -1915,6 +3723,28 @@ static int sd_remove(struct device *dev)
 {
 	struct scsi_disk *sdkp = dev_get_drvdata(dev);
 
+    sd_printk(KERN_DEBUG, sdkp,  "*** Entry in %s().\n", __FUNCTION__);
+
+/* Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 ---> */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+	/* Set removal detection flag */
+    {
+        /* Modified by Panasonic : 2009/06/09		*/
+        struct block_device *bdev = bdget_disk(sdkp->disk, 0);
+        sd_printk(KERN_CONT, sdkp,
+                  "%s() : Set removal detection flag\n",
+                  __FUNCTION__);
+        bdev->removal_detection = 1;
+    }
+
+    /* remove scsi disk character driver */
+    sdc_remove( dev );
+#endif  /* CONFIG_P2PF_SCSI_DISK_FUNC */
+/* <--- Modified by Panasonic (SAV),
+   2008-jul-24 - 2011/01/31 */
+
 	device_del(&sdkp->dev);
 	del_gendisk(sdkp->disk);
 	sd_shutdown(dev);
@@ -1923,6 +3753,9 @@ static int sd_remove(struct device *dev)
 	dev_set_drvdata(dev, NULL);
 	put_device(&sdkp->dev);
 	mutex_unlock(&sd_ref_mutex);
+
+    printk(KERN_CONT "%s(%d) : scsi disk is removed.\n",
+              __FUNCTION__, __LINE__);
 
 	return 0;
 }
@@ -1941,11 +3774,16 @@ static void scsi_disk_release(struct device *dev)
 	struct scsi_disk *sdkp = to_scsi_disk(dev);
 	struct gendisk *disk = sdkp->disk;
 	
+    sd_printk(KERN_DEBUG, sdkp,  "*** Entry in %s().\n", __FUNCTION__);
+
 	ida_remove(&sd_index_ida, sdkp->index);
 
 	disk->private_data = NULL;
 	put_disk(disk);
 	put_device(&sdkp->device->sdev_gendev);
+
+    printk(KERN_CONT "%s(%d) : scsi disk is released.\n",
+              __FUNCTION__, __LINE__);
 
 	kfree(sdkp);
 }
@@ -2044,6 +3882,182 @@ done:
 	return ret;
 }
 
+
+
+/* 2010/5/17, added by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_PROC_FS
+
+/* proc entry */
+static struct proc_dir_entry *sd_proc_entry=NULL;
+
+#define proc_sd_name "driver/scsidisk"
+
+static void *sd_seq_start(struct seq_file *s, loff_t *pos)
+{
+    struct scsi_disk_char *sdc_pl = NULL;
+    struct list_head *ptr=NULL;
+	loff_t n = *pos;
+    unsigned long flags;
+
+    spin_lock_irqsave(&sdc_list_lock, flags);
+    list_for_each(ptr, &sdc_list_head) {
+		if (!n--){
+            sdc_pl = list_entry(ptr, struct scsi_disk_char, list);
+			break;
+        }
+    } 
+    spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+	return sdc_pl;
+}
+
+static void *sd_seq_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	struct scsi_disk_char *sdc_pl = (struct scsi_disk_char *)v;
+    unsigned long flags;
+
+    spin_lock_irqsave(&sdc_list_lock, flags);
+	(*pos)++;
+    sdc_pl = list_entry(sdc_pl->list.next,struct scsi_disk_char, list);
+    spin_unlock_irqrestore(&sdc_list_lock, flags);
+
+    if( check_sdc_list_entry(sdc_pl) )
+        return NULL;
+	return sdc_pl;
+}
+
+static void sd_seq_stop(struct seq_file *m, void *v)
+{
+    /* nothing to do */
+}
+
+static int sd_seq_show(struct seq_file *m, void *v)
+{
+    int retval = 0;
+    struct sdc_dev_info *info = NULL;
+    struct scsi_device *sdev = NULL;
+	struct scsi_disk_char *sdc_pl = v;
+    union scsi_ioctl_devinfo *devinfo;
+
+    sdc_pl=get_sdc(sdc_pl);
+    if(sdc_pl==NULL || check_sdc_list_entry(sdc_pl))
+        goto exit;
+    info = &(sdc_pl->sdc_dinfo);
+    sdev = sdc_to_sdev(sdc_pl);
+    if(!sdev)
+        goto exit;
+
+    seq_printf(m,"======== /dev/%s =========\n",
+               sdc_dletter(sdc_pl));
+    seq_printf(m,"[scsi disk]\n");
+    seq_printf(m,"\thost_no=0x%08x\n",sdc_pl->host_no);
+    seq_printf(m,"\tdev_id=0x%08x\n",sdc_pl->dev_id);
+    seq_printf(m,"\tvendor=\"%s\"\n",info->vendor);
+    seq_printf(m,"\tproduct=\"%s\"\n",info->product);
+    seq_printf(m,"\tserial=\"%s\"\n",info->serial);
+    seq_printf(m,"[low-level device]\n");
+
+    devinfo = &sdc_pl->devinfo;
+    switch(sdc_pl->hosttype){
+    case SCSI_HOSTTYPE_USB:       /* USB */
+        seq_printf(m,"\ttype=USB\n");
+        seq_printf(m,"\tmax_lun=%d\n", devinfo->u.max_lun);
+        seq_printf(m,"\tvendor_id=0x%04X\n", devinfo->u.vendor_id);
+        seq_printf(m,"\tproduct_id=0x%04X\n", devinfo->u.product_id);
+        seq_printf(m,"\tvendor_name=\"%s\"\n",devinfo->u.vendor);
+        seq_printf(m,"\tproduct_name=\"%s\"\n",devinfo->u.product);
+        seq_printf(m,"\tserial=\"%s\"\n",devinfo->u.serial);
+        seq_printf(m,"\tsubclass=0x%02X\n",devinfo->u.subclass);
+        seq_printf(m,"\tprotocol=0x%02X\n",devinfo->u.protocol);
+        seq_printf(m,"\tt_bus=%d\n",devinfo->u.t_bus);
+        seq_printf(m,"\tt_level=%d\n",devinfo->u.t_level);
+        seq_printf(m,"\tt_port=%d\n",devinfo->u.t_port+1);
+        seq_printf(m,"\tt_rootport=%d\n",devinfo->u.t_rootport+1);
+        seq_printf(m,"\tt_route=0x%08x\n",devinfo->u.t_route);
+        seq_printf(m,"\tt_devno=%d\n",devinfo->u.t_devno);
+        break;
+    case SCSI_HOSTTYPE_SATA:       /* ATA */
+        seq_printf(m,"\ttype=SATA\n");
+        seq_printf(m,"\tport=#%d\n", (devinfo->a.print_id - 1) );
+        seq_printf(m,"\tdevno=%d\n", devinfo->a.devno);
+        break;
+    default:
+        seq_printf(m,"\ttype=UNKNOWN\n");
+    }
+    seq_printf(m,"\n");
+
+ exit:
+    if(sdc_pl)
+        put_sdc(sdc_pl);
+    return retval;
+}
+
+
+/* seq file operations */
+static struct seq_operations sd_seq_ops = {
+    .start = sd_seq_start,
+    .next = sd_seq_next,
+    .stop = sd_seq_stop,
+    .show = sd_seq_show,
+};
+
+static int sd_proc_open(struct inode *inode, struct file *file)
+{
+    return seq_open(file, & sd_seq_ops);
+}
+
+/* file opelations for seq files */
+static struct file_operations sd_proc_ops = {
+    .owner = THIS_MODULE,
+    .open = sd_proc_open,
+    .read = seq_read,
+    .llseek = seq_lseek,
+    .release = seq_release,
+}; 
+
+
+/*
+ * create proc entry
+ */
+static int sd_create_proc(void)
+{
+    int ret=0;
+    if(!(sd_proc_entry
+         = create_proc_entry( proc_sd_name, 0, NULL))){
+        pr_err("*** ERROR: [sd] Can't create \"/proc/" proc_sd_name "\".\n");
+        ret = -EIO;
+        goto fail;
+    }
+    sd_proc_entry->proc_fops = &sd_proc_ops;
+    
+ fail:
+
+    if(ret<0 && sd_proc_entry){
+        remove_proc_entry(proc_sd_name, NULL);
+        sd_proc_entry=NULL;
+    }
+
+    return ret;
+}
+
+/*
+ * remove proc entry
+ */
+static void sd_remove_proc(void)
+{
+    pr_debug( "[sd] Remove \"/proc/" proc_sd_name "\".\n");
+    if(sd_proc_entry){
+        remove_proc_entry(proc_sd_name, NULL);
+        sd_proc_entry=NULL;
+    }
+}
+
+#endif  /* CONFIG_P2PF_SCSI_DISK_PROC_FS */
+/* <== 2010/5/17, added by Panasonic */
+
+
+
+
 /**
  *	init_sd - entry point for this driver (both when built in or when
  *	a module).
@@ -2071,6 +4085,48 @@ static int __init init_sd(void)
 	if (err)
 		goto err_out_class;
 
+/* Add by Panasonic (SAV), 2008-jul-24 */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+	{
+		int dev_num = MKDEV( SDC_MAJOR, 0 );
+
+		err = register_chrdev_region( dev_num, ( SDC_MAX_DEVICE_NUM + 1 ), "c_sd" );
+		if( err ){
+			printk("init_sd() : register_chrdev_region() failed\n");
+			goto err_out_class;
+		}
+		cdev_init( &sdc_dev, &sdc_fops );
+		sdc_dev.owner = THIS_MODULE;
+
+		err = cdev_add( &sdc_dev, dev_num, ( SDC_MAX_DEVICE_NUM + 1 ) );
+		if( err < 0 ){
+			printk("init_sd() : cdev_add() failed\n");
+			unregister_chrdev_region( dev_num, ( SDC_MAX_DEVICE_NUM + 1 ) );
+			goto err_out_class;
+		}
+	}
+
+	/* Has to be init the wait queue here	*/
+	init_waitqueue_head( &sdc_poll_wait_queue );
+
+/* 2010/5/17, added by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_PROC_FS
+
+    err=sd_create_proc();
+    if(err) {
+		int dev_num = MKDEV( SDC_MAJOR, 0 );
+		cdev_del( &sdc_dev );
+		unregister_chrdev_region( dev_num, ( SDC_MAX_DEVICE_NUM + 1 ) );
+        goto err_out_class;
+    }
+
+#endif  /* CONFIG_P2PF_SCSI_DISK_PROC_FS */
+/* <== 2010/5/17, added by Panasonic */
+
+
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* Add by Panasonic (SAV), 2008-jul-24 */
+
 	return 0;
 
 err_out_class:
@@ -2094,6 +4150,24 @@ static void __exit exit_sd(void)
 
 	scsi_unregister_driver(&sd_template.gendrv);
 	class_unregister(&sd_disk_class);
+
+/* Add by Panasonic (SAV), 24/Jul/2008 */
+#ifdef CONFIG_P2PF_SCSI_DISK_FUNC
+
+/* 2010/5/17, added by Panasonic ==> */
+#ifdef CONFIG_P2PF_SCSI_DISK_PROC_FS
+    sd_remove_proc();
+#endif  /* CONFIG_P2PF_SCSI_DISK_PROC_FS */
+/* <== 2010/5/17, added by Panasonic */
+
+	{
+		int dev_num = MKDEV( SDC_MAJOR, 0 );
+
+		cdev_del( &sdc_dev );
+		unregister_chrdev_region( dev_num, ( SDC_MAX_DEVICE_NUM + 1 ) );
+	}
+#endif	/* CONFIG_P2PF_SCSI_DISK_FUNC	*/
+/* Add by Panasonic (SAV), 24/Jul/2008 */
 
 	for (i = 0; i < SD_MAJORS; i++)
 		unregister_blkdev(sd_major(i), "sd");

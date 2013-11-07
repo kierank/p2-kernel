@@ -1,0 +1,15 @@
+config 83XXDMAC
+        bool "MPC83XX DMAC Driver"
+
+menu "MPC83XX DMAC driver options"
+	depends on 83XXDMAC
+
+config MPC83XXDMAC_PAGE_ORDER
+	int "The order of DMA buffer size"
+	range 0 11
+	default 8
+	---help---
+	  This parameter is the order of DMA buffer size alloced beforehand.
+	  Default is order 8 for 1 frame size (576000Byte).
+
+endmenu

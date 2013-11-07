@@ -8,6 +8,7 @@
  * as published by the Free Software Foundation; either version
  * 2 of the License, or (at your option) any later version.
  */
+/* $Id: indirect_pci.c 11618 2011-01-12 08:21:34Z Noguchi Isao $ */
 
 #include <linux/kernel.h>
 #include <linux/pci.h>
@@ -19,6 +20,10 @@
 #include <asm/prom.h>
 #include <asm/pci-bridge.h>
 #include <asm/machdep.h>
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE)
+#include "mpc83xx_pci.h"
+#endif
 
 static int
 indirect_read_config(struct pci_bus *bus, unsigned int devfn, int offset,
@@ -170,3 +175,136 @@ setup_indirect_pci(struct pci_controller* hose,
 	hose->ops = &indirect_pci_ops;
 	hose->indirect_type = flags;
 }
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE)
+
+/* PCIe R/W config space routines */
+static int
+indirect_read_config_pcie(struct pci_bus *bus, uint devfn, int offset,
+			int len, u32 *val)
+{
+	struct pci_controller *hose = bus->sysdata;
+	void __iomem *cfg_addr;
+	u32 bus_no;
+
+	if (hose->indirect_type & PPC_INDIRECT_TYPE_NO_PCIE_LINK)
+		return PCIBIOS_DEVICE_NOT_FOUND;
+
+	switch (len) {
+	case 2:
+		if (offset & 1)
+			return -EINVAL;
+		break;
+	case 4:
+		if (offset & 3)
+			return -EINVAL;
+		break;
+	}
+
+	pr_debug("_read_cfg_pcie: bus=%d devfn=%x off=%x len=%x\n",
+		bus->number, devfn, offset, len);
+
+	if (devfn)
+		return PCIBIOS_DEVICE_NOT_FOUND;
+
+	bus_no = (bus->number == hose->first_busno) ?
+			hose->self_busno : bus->number;
+
+/* 2011/1/12, modified by Panasonic (SAV) */
+/* 	cfg_addr = (void __iomem *)((ulong) hose->cfg_addr + */
+/* 			((bus_no << 20) | (devfn << 12) | (offset & 0xfff))); */
+	cfg_addr = (void __iomem *)((ulong) hose->cfg_addr +
+			((bus_no << 24) | (devfn << 16) | (offset & 0xfff)));
+
+	switch (len) {
+	case 1:
+		*val = in_8(cfg_addr);
+		break;
+	case 2:
+		*val = in_le16(cfg_addr);
+		break;
+	default:
+		*val = in_le32(cfg_addr);
+		break;
+	}
+	pr_debug("_read_cfg_pcie: val=%x cfg_addr=%p\n", *val, cfg_addr);
+
+	return PCIBIOS_SUCCESSFUL;
+}
+
+static int
+indirect_write_config_pcie(struct pci_bus *bus, uint devfn, int offset,
+			   int len, u32 val)
+{
+	struct pci_controller *hose = bus->sysdata;
+	void __iomem *cfg_addr;
+	u32 bus_no;
+
+	if (hose->indirect_type & PPC_INDIRECT_TYPE_NO_PCIE_LINK)
+		return PCIBIOS_DEVICE_NOT_FOUND;
+
+	switch (len) {
+	case 2:
+		if (offset & 1)
+			return -EINVAL;
+		break;
+	case 4:
+		if (offset & 3)
+			return -EINVAL;
+		break;
+	}
+
+	if (devfn)
+		return PCIBIOS_DEVICE_NOT_FOUND;
+
+	bus_no = (bus->number == hose->first_busno) ?
+			hose->self_busno : bus->number;
+
+/* 2011/1/12, modified by Panasonic (SAV) */
+/* 	cfg_addr = (void __iomem *)((ulong) hose->cfg_addr + */
+/* 			((bus_no << 20) | (devfn << 12) | (offset & 0xfff))); */
+	cfg_addr = (void __iomem *)((ulong) hose->cfg_addr +
+			((bus_no << 24) | (devfn << 16) | (offset & 0xfff)));
+
+	switch (len) {
+	case 1:
+		out_8(cfg_addr, val);
+		break;
+	case 2:
+		out_le16(cfg_addr, val);
+		break;
+	default:
+		out_le32(cfg_addr, val);
+		break;
+	}
+
+	return PCIBIOS_SUCCESSFUL;
+}
+
+static struct pci_ops indirect_pcie_ops = {
+	indirect_read_config_pcie,
+	indirect_write_config_pcie
+};
+
+void __init
+setup_indirect_pcie_nomap(struct pci_controller *hose, void __iomem *cfg_addr)
+{
+	hose->cfg_addr = cfg_addr;
+	hose->ops = &indirect_pcie_ops;
+}
+
+/* 2011/1/12, modified by Panasonic (SAV) */
+/* void __init setup_indirect_pcie(struct pci_controller *hose, u32 cfg_addr) */
+void __init setup_indirect_pcie(struct pci_controller *hose, u32 cfg_addr, u32 cfg_size)
+{
+	ulong base = cfg_addr & PAGE_MASK;
+	void __iomem *mbase, *addr;
+
+/* 2011/1/12, modified by Panasonic (SAV) ---> */
+/* 	mbase = ioremap(base, 0x1000); /\* CFG-space of PCIe is 4KB: 2010/7/24, modified by Panasonic (SAV) *\/ */
+	mbase = ioremap(base, cfg_size);
+/* <--- 2011/1/12, modified by Panasonic (SAV) */
+	addr = mbase + (cfg_addr & ~PAGE_MASK);
+	setup_indirect_pcie_nomap(hose, addr);
+}
+#endif /* CONFIG_PPC_MPC83XX_PCIE */

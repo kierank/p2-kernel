@@ -1,8 +1,17 @@
 # For a description of the syntax of this configuration file,
 # see Documentation/kbuild/kconfig-language.txt.
 #
+## $Id: Kconfig 9139 2010-09-14 00:43:11Z Noguchi Isao $
 
 config PPC4xx_PCI_EXPRESS
 	bool
 	depends on PCI && 4xx
 	default n
+
+## 2010/6/8, deleted by Panasonic
+#config PPC_MPC83XX_PCIE
+#	bool "MPC837X and MPC831x PCI Express support"
+#	depends on PPC_MPC837x || PPC_MPC831x
+#	depends on PCIEPORTBUS
+#	help
+#	  This option enables PCI express for MPC837x and MPC831x

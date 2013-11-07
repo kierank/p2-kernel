@@ -1,3 +1,5 @@
+/* $Id: scsi_device.h 6350 2010-04-13 01:36:54Z Noguchi Isao $ */
+
 #ifndef _SCSI_SCSI_DEVICE_H
 #define _SCSI_SCSI_DEVICE_H
 
@@ -8,6 +10,11 @@
 #include <linux/blkdev.h>
 #include <scsi/scsi.h>
 #include <asm/atomic.h>
+/* 2010/4/8-13, added by Panasonic >>>> */
+#ifdef CONFIG_P2PF_SCSI_DISK_BLK_ERROR
+#include <scsi/scsi_ioctl.h>
+#endif  /* CONFIG_P2PF_SCSI_DISK_BLK_ERROR */
+/* <<<< 2010/4/8-13, added by Panasonic */
 
 struct request_queue;
 struct scsi_cmnd;
@@ -62,6 +69,13 @@ struct scsi_event {
 	 * here
 	 */
 };
+
+/* Modified by Panasonic (SAV), 2009-sep-28 */
+struct scsi_notify_operations{
+	int (*mount_fs) (struct scsi_device *);
+	int (*umount_fs) (struct scsi_device *);
+};
+/*------------------------------------------*/
 
 struct scsi_device {
 	struct Scsi_Host *host;
@@ -166,6 +180,21 @@ struct scsi_device {
 
 	struct scsi_dh_data	*scsi_dh_data;
 	enum scsi_device_state sdev_state;
+
+	/* Modified by Panasonic (SAV), 2009-sep-28 */
+	void *extra;
+	struct scsi_notify_operations *notify_ops;
+	/*------------------------------------------*/
+
+/* 2010/4/8-13, added by Panasonic >>>> */
+#ifdef CONFIG_P2PF_SCSI_DISK_BLK_ERROR
+    int blk_err_count;
+    struct scsi_ioctl_blk_err blk_err_status;
+    spinlock_t blk_err_lock;
+    wait_queue_head_t blk_err_wait_queue;
+#endif  /* CONFIG_P2PF_SCSI_DISK_BLK_ERROR */
+/* <<<< 2010/4/8-13, added by Panasonic */
+
 	unsigned long		sdev_data[0];
 } __attribute__((aligned(sizeof(unsigned long))));
 

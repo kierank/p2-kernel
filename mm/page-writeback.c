@@ -1003,7 +1003,18 @@ EXPORT_SYMBOL(generic_writepages);
 int do_writepages(struct address_space *mapping, struct writeback_control *wbc)
 {
 	int ret;
+#if defined(CONFIG_RTCTRL) /* Added by Panasonic for RT control */
+	struct inode *inode = mapping->host;
+	dev_t dev = choose_rtctrl_dev(inode->i_sb->s_dev, inode->i_rdev);
 
+	lock_rton( MAJOR(dev) );
+	if ( inode && !inode_is_rt(inode) && is_rton4wait(dev) ) {
+		wbc->sync_mode = WB_SYNC_NONE;
+		wbc->nonblocking = 1;
+	}
+	unlock_rton( MAJOR(dev) );
+#endif /* CONFIG_RTCTRL */
+	
 	if (wbc->nr_to_write <= 0)
 		return 0;
 	wbc->for_writepages = 1;
@@ -1032,7 +1043,22 @@ int write_one_page(struct page *page, int wait)
 		.sync_mode = WB_SYNC_ALL,
 		.nr_to_write = 1,
 	};
+#if defined(CONFIG_RTCTRL) /* Added by Panasonic for RT control */
+	struct inode *inode = mapping->host;
 
+	if (inode) {
+		dev_t dev = choose_rtctrl_dev(inode->i_sb->s_dev, inode->i_rdev);
+
+		lock_rton( MAJOR(dev) );
+		if ( !inode_is_rt(inode) && is_rton4wait(dev) ) {
+			wait = 0;
+			wbc.sync_mode = WB_SYNC_NONE;
+			wbc.nonblocking = 1;
+		}
+		unlock_rton( MAJOR(dev) );
+	}
+#endif /* CONFIG_RTCTRL */
+	
 	BUG_ON(!PageLocked(page));
 
 	if (wait)

@@ -10,6 +10,8 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
+/* $Id: ipic.c 9139 2010-09-14 00:43:11Z Noguchi Isao $ */
+
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/errno.h>
@@ -523,7 +525,12 @@ static inline struct ipic * ipic_from_irq(unsigned int virq)
 
 #define ipic_irq_to_hw(virq)	((unsigned int)irq_map[virq].hwirq)
 
-static void ipic_unmask_irq(unsigned int virq)
+/* 2010/6/8, modified by Panasonic */
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+void ipic_unmask_irq(unsigned int virq)
+#else
+static void ipic_unmask_irq(unsigned int virq) /* original */
+#endif
 {
 	struct ipic *ipic = ipic_from_irq(virq);
 	unsigned int src = ipic_irq_to_hw(virq);
@@ -536,10 +543,29 @@ static void ipic_unmask_irq(unsigned int virq)
 	temp |= (1 << (31 - ipic_info[src].bit));
 	ipic_write(ipic->regs, ipic_info[src].mask, temp);
 
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+	for (temp = 0; temp < MSI_REGS; temp++) {
+		if (src == vec_83xx[temp]) {
+			u32 val;
+			val = ipic_read(ipic->regs, IPIC_MSIMR);
+			ipic_write(ipic->regs, IPIC_MSIMR,
+				val & ~(1 << temp));
+		break;
+		}
+	}
+#endif
+
+	mb();
+
 	spin_unlock_irqrestore(&ipic_lock, flags);
 }
 
-static void ipic_mask_irq(unsigned int virq)
+/* 2010/6/8, modified by Panasonic */
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+void ipic_mask_irq(unsigned int virq)
+#else
+static void ipic_mask_irq(unsigned int virq) /* original */
+#endif
 {
 	struct ipic *ipic = ipic_from_irq(virq);
 	unsigned int src = ipic_irq_to_hw(virq);
@@ -559,7 +585,12 @@ static void ipic_mask_irq(unsigned int virq)
 	spin_unlock_irqrestore(&ipic_lock, flags);
 }
 
-static void ipic_ack_irq(unsigned int virq)
+/* 2010/6/8, modified by Panasonic */
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+void ipic_ack_irq(unsigned int virq)
+#else
+static void ipic_ack_irq(unsigned int virq) /* original */
+#endif
 {
 	struct ipic *ipic = ipic_from_irq(virq);
 	unsigned int src = ipic_irq_to_hw(virq);
@@ -567,6 +598,17 @@ static void ipic_ack_irq(unsigned int virq)
 	u32 temp;
 
 	spin_lock_irqsave(&ipic_lock, flags);
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+	for (temp = 0; temp < MSI_REGS; temp++) {
+		if (src == vec_83xx[temp]) {
+			u32 val;
+			val = ipic_read(ipic->regs, IPIC_MSIMR);
+			ipic_write(ipic->regs, IPIC_MSIMR, val | (1 << temp));
+			break;
+		}
+	}
+#endif
 
 	temp = ipic_read(ipic->regs, ipic_info[src].ack);
 	temp |= (1 << (31 - ipic_info[src].bit));
@@ -579,7 +621,12 @@ static void ipic_ack_irq(unsigned int virq)
 	spin_unlock_irqrestore(&ipic_lock, flags);
 }
 
-static void ipic_mask_irq_and_ack(unsigned int virq)
+/* 2010/6/8, modified by Panasonic */
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+void ipic_mask_irq_and_ack(unsigned int virq)
+#else
+static void ipic_mask_irq_and_ack(unsigned int virq) /* original */
+#endif
 {
 	struct ipic *ipic = ipic_from_irq(virq);
 	unsigned int src = ipic_irq_to_hw(virq);
@@ -587,11 +634,29 @@ static void ipic_mask_irq_and_ack(unsigned int virq)
 	u32 temp;
 
 	spin_lock_irqsave(&ipic_lock, flags);
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+	for (temp = 0; temp < MSI_REGS; temp++) {
+		if (src == vec_83xx[temp]) {
+			ipic_read(ipic->regs, IPIC_MSIR0 + (4 * temp));
+			break;
+		}
+	}
+#endif
 
 	temp = ipic_read(ipic->regs, ipic_info[src].mask);
 	temp &= ~(1 << (31 - ipic_info[src].bit));
 	ipic_write(ipic->regs, ipic_info[src].mask, temp);
 
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+	for (temp = 0; temp < MSI_REGS; temp++) {
+		if (src == vec_83xx[temp]) {
+			ipic_read(ipic->regs, IPIC_MSIR0 + (4 * temp));
+			break;
+		}
+	}
+#endif
+
 	temp = ipic_read(ipic->regs, ipic_info[src].ack);
 	temp |= (1 << (31 - ipic_info[src].bit));
 	ipic_write(ipic->regs, ipic_info[src].ack, temp);
@@ -603,7 +668,12 @@ static void ipic_mask_irq_and_ack(unsigned int virq)
 	spin_unlock_irqrestore(&ipic_lock, flags);
 }
 
-static int ipic_set_irq_type(unsigned int virq, unsigned int flow_type)
+/* 2010/6/8, modified by Panasonic */
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+int ipic_set_irq_type(unsigned int virq, unsigned int flow_type)
+#else
+static int ipic_set_irq_type(unsigned int virq, unsigned int flow_type) /* original */
+#endif
 {
 	struct ipic *ipic = ipic_from_irq(virq);
 	unsigned int src = ipic_irq_to_hw(virq);
@@ -781,6 +851,10 @@ struct ipic * __init ipic_init(struct device_node *node, unsigned int flags)
 		temp &= ~SEMSR_SIRQ0;
 
 	ipic_write(ipic->regs, IPIC_SEMSR, temp);
+
+#if defined(CONFIG_PPC_MPC83XX_PCIE) && defined(CONFIG_PCI_MSI)
+	mpc83xx_msi_init(ipic);
+#endif
 
 	primary_ipic = ipic;
 	irq_set_default_host(primary_ipic->irqhost);

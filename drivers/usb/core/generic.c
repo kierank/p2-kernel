@@ -16,6 +16,7 @@
  *	(C) Copyright Greg Kroah-Hartman 2002-2003
  *
  */
+/* $Id: generic.c 9139 2010-09-14 00:43:11Z Noguchi Isao $ */
 
 #include <linux/usb.h>
 #include "usb.h"
@@ -120,7 +121,9 @@ int usb_choose_configuration(struct usb_device *udev)
 		 * than a vendor-specific driver. */
 		else if (udev->descriptor.bDeviceClass !=
 						USB_CLASS_VENDOR_SPEC &&
-				(!desc || desc->bInterfaceClass !=
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic for bug-fix */
+/* 				(!desc || desc->bInterfaceClass != */
+				(desc && desc->bInterfaceClass !=
 						USB_CLASS_VENDOR_SPEC)) {
 			best = c;
 			break;
@@ -139,7 +142,9 @@ int usb_choose_configuration(struct usb_device *udev)
 
 	if (best) {
 		i = best->desc.bConfigurationValue;
-		dev_info(&udev->dev,
+/* 2010/7/14, back-porting from 2.6.33 by Panasonic */
+/* 		dev_info(&udev->dev, */
+		dev_dbg(&udev->dev,
 			"configuration #%d chosen from %d choice%s\n",
 			i, num_configs, plural(num_configs));
 	} else {
@@ -200,18 +205,18 @@ static int generic_suspend(struct usb_device *udev, pm_message_t msg)
 	 * interfaces manually by doing a bus (or "global") suspend.
 	 */
 	if (!udev->parent)
-		rc = hcd_bus_suspend(udev);
+		rc = hcd_bus_suspend(udev, msg);
 
 	/* Non-root devices don't need to do anything for FREEZE or PRETHAW */
 	else if (msg.event == PM_EVENT_FREEZE || msg.event == PM_EVENT_PRETHAW)
 		rc = 0;
 	else
-		rc = usb_port_suspend(udev);
+		rc = usb_port_suspend(udev, msg);
 
 	return rc;
 }
 
-static int generic_resume(struct usb_device *udev)
+static int generic_resume(struct usb_device *udev, pm_message_t msg)
 {
 	int rc;
 
@@ -221,9 +226,9 @@ static int generic_resume(struct usb_device *udev)
 	 * interfaces manually by doing a bus (or "global") resume.
 	 */
 	if (!udev->parent)
-		rc = hcd_bus_resume(udev);
+		rc = hcd_bus_resume(udev, msg);
 	else
-		rc = usb_port_resume(udev);
+		rc = usb_port_resume(udev, msg);
 	return rc;
 }
 

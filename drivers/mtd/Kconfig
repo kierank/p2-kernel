@@ -132,6 +132,14 @@ config MTD_CMDLINE_PARTS
 
 	  If unsure, say 'N'.
 
+# Add by Panasonic 2008/02/6
+config MTD_SINGLEOPEN
+	bool "MTD single open support"
+	depends on MTD
+	---help---
+	  If you need single open, enable this option.
+	  If you enable it, add pid and open counter to proc infomation.
+
 config MTD_AFS_PARTS
 	tristate "ARM Firmware Suite partition parsing"
 	depends on ARM && MTD_PARTITIONS
@@ -171,6 +179,28 @@ config MTD_CHAR
 	  the system, allowing the user to read and write directly to the
 	  memory chips, and also use ioctl() to obtain information about
 	  the device, or to erase parts of it.
+
+config MTD_SET_MAX_KMALLOC_SIZE
+	bool "Setting the maximum size of kmalloc option"
+	depends on MTD_CHAR
+	---help---
+	  This option can set the maximum size of kmalloc for buffer to read/write.
+
+config MTD_MAX_KMALLOC_SIZE4READ
+	hex "The maximum size of kmalloc for read."
+	depends on MTD_SET_MAX_KMALLOC_SIZE
+	default 0x00008000
+	---help---
+	  This parameter is the maximum size of kmalloc for buffer to read.
+	  Default size is 0x00008000(=32KB).
+
+config MTD_MAX_KMALLOC_SIZE4WRITE
+	hex "The maximum size of kmalloc for write."
+	depends on MTD_SET_MAX_KMALLOC_SIZE
+	default 0x00020000
+	---help---
+	  This parameter is the maximum size of kmalloc for buffer to write.
+	  Default size is 0x00020000(=128KB).
 
 config MTD_BLKDEVS
 	tristate "Common interface to block layer for MTD 'translation layers'"

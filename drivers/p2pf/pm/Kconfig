@@ -1,0 +1,50 @@
+# drivers/p2pf/pm/Kconfig
+# $Id: Kconfig 5088 2010-02-09 02:49:16Z Sawada Koji $
+
+menuconfig P2PF_PM
+	bool "Power management depending on P2PF machines" 
+    default n
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+	  If unsure, say Y.
+
+if P2PF_PM
+
+config P2PF_PM_POFF
+    bool "Support power-off control"
+    default n
+
+config P2PF_PM_POFF_GPIO
+    bool "Using GPIO for power-off signal"
+    depends on P2PF_PM_POFF
+	select GENERIC_GPIO
+	select ARCH_REQUIRE_GPIOLIB
+    default y
+
+if P2PF_PM_POFF_GPIO
+
+config P2PF_PM_POFF_GPIO_OF
+    bool "Getting GPIO setting by OF description"
+    default y
+
+config P2PF_PM_POFF_GPIO_PORT
+    int "GPIO port number for power-off signal"
+    depends on !P2PF_PM_POFF_GPIO_OF
+
+choice
+    bool "Porality of GPIO port for power-off"
+    depends on !P2PF_PM_POFF_GPIO_OF
+
+config P2PF_PM_POFF_GPIO_POL_HIGH
+    bool "Active-HIGH"
+
+config P2PF_PM_POFF_GPIO_POL_LOW
+    bool "Active-LOW"
+
+endchoice
+
+endif # P2PF_PM_POFF_GPIO
+
+endif # P2PF_PM
+

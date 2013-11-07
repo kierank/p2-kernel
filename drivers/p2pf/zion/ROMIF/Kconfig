@@ -1,0 +1,7 @@
+config ZION_ROMIF
+	bool "Support ROM IF"
+	help
+	  Select this option if you don't have magic firmware for drivers that
+	  need it.
+
+	  If unsure, say Y.

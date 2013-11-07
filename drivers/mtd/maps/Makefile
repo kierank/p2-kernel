@@ -1,6 +1,7 @@
 #
 # linux/drivers/maps/Makefile
 #
+## $Id: Makefile 17806 2011-12-06 07:37:41Z Horita Seiji $
 
 ifeq ($(CONFIG_MTD_COMPLEX_MAPPINGS),y)
 obj-$(CONFIG_MTD)		+= map_funcs.o
@@ -36,6 +37,16 @@ obj-$(CONFIG_MTD_SC520CDP)	+= sc520cdp.o
 obj-$(CONFIG_MTD_NETSC520)	+= netsc520.o
 obj-$(CONFIG_MTD_TS5500)	+= ts5500_flash.o
 obj-$(CONFIG_MTD_SUN_UFLASH)	+= sun_uflash.o
+obj-$(CONFIG_MTD_MPC8313ERDB)   += mpc8313erdb.o
+
+# Added by Panasonic
+obj-$(CONFIG_MTD_AJ_HPM200)	+= aj-hpm200.o
+obj-$(CONFIG_MTD_P2PF_K286)	+= p2pf-K286.o
+obj-$(CONFIG_MTD_AJ_PCD2)	+= aj-pcd2.o
+obj-$(CONFIG_MTD_AG_HMC80)	+= ag-hmc80.o
+obj-$(CONFIG_MTD_AJ_HPX3100)	+= aj-hpx3100.o
+obj-$(CONFIG_MTD_AG_3DP1)	+= ag-3dp1.o
+
 obj-$(CONFIG_MTD_VMAX)		+= vmax301.o
 obj-$(CONFIG_MTD_SCx200_DOCFLASH)+= scx200_docflash.o
 obj-$(CONFIG_MTD_DBOX2)		+= dbox2-flash.o

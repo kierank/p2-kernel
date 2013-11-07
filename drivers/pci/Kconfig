@@ -1,6 +1,8 @@
 #
 # PCI configuration
 #
+## $Id: Kconfig 11381 2010-12-23 22:37:43Z Noguchi Isao $
+
 config ARCH_SUPPORTS_MSI
 	bool
 	default n
@@ -50,3 +52,36 @@ config HT_IRQ
 	   This allows native hypertransport devices to use interrupts.
 
 	   If unsure say Y.
+
+## 2010/12/9, added by Panasonic (SAV) ==>
+config PPC_MPC83XX_PCI_IOMAP
+    bool "Improvement of PCI/PCIe I/O area mapping for MPC837x and MPC831x"
+	depends on PCI
+	depends on PPC_MPC837x || PPC_MPC831x
+    default n
+    help
+        This option enables the improvement of PCI/PCIe I/O area mapping for
+        MPC837x and MPC831x
+## <=== 2010/12/9, added by Panasonic (SAV)
+
+
+## 2010/12/21, modified by Panasonic (SAV) --->
+config SUPPORT_CARDBUS_SIZE
+    bool "Enable to change default mem/io region size for CardBus bridge"
+	depends on PCI
+    default n
+    help
+        This option enables to change defalt mem/io region size for
+        CardBus bridge
+
+config CARDBUS_MEM_SIZE
+    hex "Memory region size for CardBus bridge"
+    depends on SUPPORT_CARDBUS_SIZE
+    default 0x4000000
+
+config CARDBUS_IO_SIZE
+    hex "I/O region size for CardBus bridge"
+    depends on SUPPORT_CARDBUS_SIZE
+    default 0x100
+## <--- 2010/12/21, modified by Panasonic (SAV)
+
